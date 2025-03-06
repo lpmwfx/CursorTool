@@ -41,14 +41,32 @@ class SettingsService extends ChangeNotifier {
   // Find standardstien til CLI-værktøjet
   String _findDefaultCliPath() {
     final homeDir = Platform.environment['HOME'] ?? '';
-    final defaultPath = path.join(homeDir, '.cursor', 'cursorchat');
 
-    if (File(defaultPath).existsSync()) {
-      return defaultPath;
+    // Liste over mulige stier at tjekke - prioriteret rækkefølge
+    final pathsToCheck = [
+      '/home/lpm/.cursor/cursor_chat_tool', // Direkte sti vi ved der virker
+      path.join(homeDir, '.cursor', 'cursor_chat_tool'),
+      path.join(homeDir, 'Repo på HDD', 'CursorTool', 'cursor_chat_cli',
+          'cursor_chat_tool'),
+    ];
+
+    // Tjek hver sti
+    for (final pathToCheck in pathsToCheck) {
+      try {
+        final file = File(pathToCheck);
+        if (file.existsSync()) {
+          print('Fandt CLI-værktøj på: $pathToCheck');
+          return pathToCheck;
+        }
+      } catch (e) {
+        print('Fejl ved søgning efter CLI-værktøj på $pathToCheck: $e');
+      }
     }
 
-    // Alternativt, se om det er i PATH
-    return 'cursorchat';
+    // Hvis vi ikke finder det, brug standardstien
+    print(
+        'Kunne ikke finde CLI-værktøjet, bruger standardsti: /home/lpm/.cursor/cursor_chat_tool');
+    return '/home/lpm/.cursor/cursor_chat_tool';
   }
 
   // Find standardstien til workspace storage

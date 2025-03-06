@@ -101,11 +101,36 @@ class ChatService extends ChangeNotifier {
 
   // Vis TUI browseren
   Future<bool> showTuiBrowser() async {
+    _isLoading = true;
+    _lastError = '';
+    notifyListeners();
+
     try {
-      await _runCliCommand([]);
+      print('Forsøger at starte TUI browseren: ${_settings.cliPath}');
+
+      // Tjek om CLI-værktøjet eksisterer
+      final cliFile = File(_settings.cliPath);
+      if (!cliFile.existsSync() && !_settings.cliPath.contains('/')) {
+        // Hvis stien ikke indeholder '/', så er det måske et program i PATH
+        print('CLI-værktøj ikke fundet som fil, men det kan være i PATH');
+      } else if (!cliFile.existsSync()) {
+        throw Exception('CLI-værktøj ikke fundet: ${_settings.cliPath}');
+      }
+
+      final result = await _runCliCommand([]);
+
+      if (result.exitCode != 0) {
+        throw Exception(
+            'CLI returnerede fejlkode ${result.exitCode}: ${result.stderr}');
+      }
+
+      _isLoading = false;
+      notifyListeners();
       return true;
     } catch (e) {
       _lastError = 'Fejl ved start af TUI browser: $e';
+      print('TUI Browser fejl: $e');
+      _isLoading = false;
       notifyListeners();
       return false;
     }
