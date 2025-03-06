@@ -774,13 +774,298 @@ Nu vil vi tilføje ~/.cursor til PATH i .bashrc, men først lad os tjekke om det
 
 _****_
 
+```bash
+grep -q "PATH=\"\$HOME/.cursor:\$PATH\"" ~/.bashrc && echo "Allerede tilføjet" || echo "Skal tilføjes"
+```
 
+```
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$ grep -q "PATH=\"\$HOME/.cursor:\$PATH\"" ~/.bashrc && e
+cho "Allerede tilføjet" || echo "Skal tigrep -q "PATH=\"\$HOME/.cursor:\$PATH\"" ~/.bashrc && e
+cho "Allerede tilføjet" || echo "Skal tilføjes"
+Skal tilføjes
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$
+```
 
 ---
 
 _****_
 
+Nu tilføjer vi stien til .bashrc:
 
+---
+
+_****_
+
+```bash
+echo -e '\n# Tilføj cursor_chat_tool til PATH\nexport PATH="$HOME/.cursor:$PATH"' >> ~/.bashrc
+```
+
+```
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$ 
+
+```
+
+---
+
+_****_
+
+Lad os lave et symlink til værktøjet, så du kan køre det nemmere:
+
+---
+
+_****_
+
+```bash
+ln -sf ~/.cursor/cursor_chat_tool ~/.cursor/cursorchat
+```
+
+```
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$ 
+
+```
+
+---
+
+_****_
+
+Lad os sikre, at det virker ved at indlæse den opdaterede .bashrc og teste kommandoen:
+
+---
+
+_****_
+
+```bash
+source ~/.bashrc && which cursorchat
+```
+
+```
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$ source ~/.bashrc && which cursorchat
+/home/lpm/.cursor/cursorchat
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$
+```
+
+---
+
+_****_
+
+Perfekt! Nu er værktøjet installeret og klar til brug. Her er en oversigt over, hvad vi har gjort:
+
+1. **Kompileret værktøjet** til en selvstændig eksekverbar fil
+2. **Oprettet ~/.cursor mappen** i din hjemmemappe
+3. **Kopieret den eksekverbare fil** til ~/.cursor og gjort den kørselsbar
+4. **Tilføjet ~/.cursor til PATH** i din .bashrc fil
+5. **Oprettet et symlink** `cursorchat` for lettere adgang
+
+Du kan nu køre værktøjet direkte fra enhver mappe med følgende kommandoer:
+
+```
+# Køre TUI browseren
+cursorchat
+
+# Liste alle chats
+cursorchat --list
+
+# Udtræk en specifik chat som HTML
+cursorchat --extract 3 --format html --output ~/mine_chats
+
+# Udtræk alle chats som markdown
+cursorchat --extract alle --format markdown --output ~/mine_chats
+```
+
+Ændringerne træder helt i kraft, når du starter en ny terminal. I din nuværende terminal har vi allerede indlæst den opdaterede .bashrc, så kommandoen er klar til brug med det samme.
+
+Er der andet, du gerne vil have hjælp med omkring værktøjet?
+
+---
+
+_**User**_
+
+vil du klave en readme.md til den
+
+---
+
+_**Assistant**_
+
+<think>
+Jeg skal lave en README.md fil til projektet. Baseret på projektets formål og funktionalitet, vil jeg strukturere README.md filen med følgende:
+
+1. Projekttitel og kort beskrivelse
+2. Installation
+3. Brug (kommandoeksempler)
+4. Funktioner
+5. Konfiguration
+6. Filformater der understøttes
+7. Systemkrav
+8. Fejlfinding
+
+Jeg vil skrive indholdet på dansk og holde det simpelt og praktisk, som Lars foretrækker.
+</think>
+
+Jeg laver en grundig README.md til projektet:
+
+---
+
+_****_
+
+Read file: README.md
+
+---
+
+_****_
+
+Nu vil jeg opdatere README.md-filen med de korrekte oplysninger:
+
+---
+
+_****_
+
+```diff
+  # Cursor Chat Værktøj
+  
+- Et simpelt kommandolinjeværktøj til at browse og udtrække chat historikker fra Cursor AI IDE.
++ Et simpelt kommandolinjeværktøj til at browse og udtrække chat historikker fra Cursor AI IDE's SQLite databaser.
+  
+  ## Funktioner
+  - Udtrække chat historikker til forskellige formater (tekst, JSON, Markdown, HTML)
+  - Liste alle tilgængelige chat historikker
+- - Søge i chat historik
++ - Gennemsøge dine Cursor AI chat historikker
+  
+  ## Installation
++ 
++ ### Metode 1: Installér fra kildekode (kræver Dart SDK)
+  
+  1. Installer [Dart SDK](https://dart.dev/get-dart) hvis du ikke allerede har det.
+     dart pub get
+     ```
+- 4. (Valgfrit) Byg en eksekverbar fil:
++ 4. Byg og installér:
+     ```
+     dart compile exe bin/cursor_chat_tool.dart -o cursor_chat_tool
+-    ```
++    mkdir -p ~/.cursor
++    cp cursor_chat_tool ~/.cursor/
++    chmod +x ~/.cursor/cursor_chat_tool
++    ln -sf ~/.cursor/cursor_chat_tool ~/.cursor/cursorchat
++    ```
++ 5. Tilføj til PATH i din .bashrc:
++    ```
++    echo -e '\n# Tilføj cursor_chat_tool til PATH\nexport PATH="$HOME/.cursor:$PATH"' >> ~/.bashrc
++    source ~/.bashrc
++    ```
++ 
++ ### Metode 2: Kør direkte fra kildekode
++ 
++ Hvis du foretrækker at køre værktøjet direkte uden at bygge det:
++ 
++ ```
++ cd cursor_chat_tool
++ dart run bin/cursor_chat_tool.dart [options]
++ ```
+  
+  ## Brug
+  Cursor Chat Browser & Extractor
+  
+- Brug: cursor_chat_tool [options]
++ Brug: cursorchat [options]
+  
+  -h, --help       Vis hjælp
+  **Start TUI browser:**
+  ```
+- dart run bin/cursor_chat_tool.dart
++ cursorchat
+  ```
+  
+  **List alle chat historikker:**
+  ```
+- dart run bin/cursor_chat_tool.dart --list
++ cursorchat --list
+  ```
+  
+  **Udtræk en specifik chat som Markdown:**
+  ```
+- dart run bin/cursor_chat_tool.dart --extract 1 --format markdown --output ./mine_chats
++ cursorchat --extract 1 --format markdown --output ./mine_chats
+  ```
+  
+  **Udtræk alle chats som HTML:**
+  ```
+- dart run bin/cursor_chat_tool.dart --extract alle --format html
++ cursorchat --extract alle --format html --output ./mine_chats
+  ```
+  
+  Værktøjet vil som standard forsøge at finde Cursor AI chat historikker i følgende placeringer:
+  
+- - **Linux:** `~/.config/cursor/chat_history`
+- - **macOS:** `~/Library/Application Support/cursor/chat_history`
+- - **Windows:** `%APPDATA%\cursor\chat_history`
++ - **Linux:** `~/.config/Cursor/User/workspaceStorage`
++ - **macOS:** `~/Library/Application Support/Cursor/User/workspaceStorage`
++ - **Windows:** `%APPDATA%\Cursor\User\workspaceStorage`
+  
+  Du kan oprette en konfigurationsfil `~/.cursor_chat_tool.conf` med følgende indhold for at angive en anden placering:
+  
+  ```json
+  {
+-   "chatHistoryPath": "/sti/til/mine/chat/historikker"
+- }
+- ```
++   "workspaceStoragePath": "/sti/til/cursor/workspaceStorage"
++ }
++ ```
++ 
++ ## Sådan virker det
++ 
++ Værktøjet:
++ 1. Finder alle `state.vscdb` SQLite databaser i Cursor's workspace storage mapper
++ 2. Udtrækker chat data fra disse databaser ved at søge efter specifikke nøgler
++ 3. Parser JSON-dataene og strukturerer dem til et forståeligt format
++ 4. Viser dem i en TUI eller eksporterer dem til de ønskede formater
++ 
++ ## Understøttede filformater
++ 
++ - **Text (.txt)**: Simpel, læsbar tekstformat
++ - **Markdown (.md)**: Formateret med Markdown, egnet til visning på platforme som GitHub
++ - **HTML (.html)**: Formateret med CSS, kan åbnes direkte i en browser
++ - **JSON (.json)**: Rå dataformat, egnet til yderligere databehandling
++ 
++ ## Fejlfinding
++ 
++ ### Værktøjet finder ikke mine chats
++ - Sørg for at Cursor IDE er installeret på standardplaceringen
++ - Tjek sti-formatet i konfigurationen (`workspaceStoragePath`)
++ - På Linux, sørg for korrekt case-sensitiv sti (bemærk stort "C" i "Cursor")
++ 
++ ### Installation problemer
++ - Sørg for at Dart SDK er korrekt installeret og tilgængeligt i PATH
++ - Tjek rettigheder til ~/.cursor mappen og eksekverbare filer
+  
+  ## Udviklet af
+  
+- Dette værktøj er udviklet af [Dit Navn] med hjælp fra Claude AI. 
++ Dette værktøj er udviklet af Lars med hjælp fra Claude 3.7 AI. 
+```
+
+---
+
+_****_
+
+Perfekt! Nu har du en komplet README.md-fil, der beskriver dit værktøj i detaljer. README-filen indeholder:
+
+1. **En klar introduktion** til hvad værktøjet gør
+2. **To installationsmetoder**:
+   - Den fulde installationsmetode (med kompilering og installation i ~/.cursor)
+   - Den simple metode (kør direkte fra kildekoden)
+3. **Detaljerede eksempler** på brug med den nye `cursorchat` kommando
+4. **Korrekt information** om hvor Cursor gemmer databaser (med stort C i Cursor)
+5. **En beskrivelse af hvordan værktøjet virker** (finder SQLite-databaser, etc.)
+6. **Understøttede filformater** med forklaring af hver
+7. **En fejlfindingssektion** der adresserer de mest sandsynlige problemer
+8. **Korrekt kreditering** af dig som udvikler
+
+Denne README.md giver både nye og erfarne brugere al den information, de har brug for for at installere, konfigurere og bruge værktøjet effektivt.
+
+Er der noget mere, du gerne vil tilføje eller ændre i README.md?
 
 ---
 
