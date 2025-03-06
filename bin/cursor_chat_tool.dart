@@ -6,38 +6,37 @@ import '../lib/chat_extractor.dart';
 import '../lib/config.dart';
 
 void main(List<String> arguments) async {
-  final parser =
-      ArgParser()
-        ..addFlag('help', abbr: 'h', negatable: false, help: 'Vis hjælp')
-        ..addFlag(
-          'list',
-          abbr: 'l',
-          negatable: false,
-          help: 'List alle chat historikker',
-        )
-        ..addOption(
-          'extract',
-          abbr: 'e',
-          help: 'Udtræk en specifik chat (id eller alle)',
-        )
-        ..addOption(
-          'format',
-          abbr: 'f',
-          help: 'Output format (text, markdown, html, json)',
-          defaultsTo: 'text',
-        )
-        ..addOption(
-          'output',
-          abbr: 'o',
-          help: 'Output mappe',
-          defaultsTo: './output',
-        )
-        ..addOption(
-          'config',
-          abbr: 'c',
-          help: 'Sti til konfigurationsfil',
-          defaultsTo: '~/.cursor_chat_tool.conf',
-        );
+  final parser = ArgParser()
+    ..addFlag('help', abbr: 'h', negatable: false, help: 'Vis hjælp')
+    ..addFlag(
+      'list',
+      abbr: 'l',
+      negatable: false,
+      help: 'List alle chat historikker',
+    )
+    ..addOption(
+      'extract',
+      abbr: 'e',
+      help: 'Udtræk en specifik chat (id eller alle)',
+    )
+    ..addOption(
+      'format',
+      abbr: 'f',
+      help: 'Output format (text, markdown, html, json)',
+      defaultsTo: 'text',
+    )
+    ..addOption(
+      'output',
+      abbr: 'o',
+      help: 'Output mappe',
+      defaultsTo: './output',
+    )
+    ..addOption(
+      'config',
+      abbr: 'c',
+      help: 'Sti til konfigurationsfil',
+      defaultsTo: '~/.cursor_chat_tool.conf',
+    );
 
   try {
     final results = parser.parse(arguments);

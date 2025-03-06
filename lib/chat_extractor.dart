@@ -8,16 +8,27 @@ import 'chat_browser.dart';
 /// Klasse til at udtrække chats fra historik
 class ChatExtractor {
   final Config config;
+  final ChatBrowser browser;
 
-  ChatExtractor(this.config);
+  ChatExtractor(this.config) : browser = ChatBrowser(config);
 
   /// Udtræk en specifik chat eller alle chats
   Future<void> extract(String chatId, String outputPath, String format) async {
-    final browser = ChatBrowser(config);
-    final chats = await _loadChatsForExtraction(chatId);
+    List<Chat> chats = [];
+
+    if (chatId.toLowerCase() == 'alle') {
+      // Hent alle chats ved at kalde _loadChats direkte
+      chats = await browser._loadChats();
+    } else {
+      // Hent specifik chat med den offentlige metode
+      final chat = await browser.getChat(chatId);
+      if (chat != null) {
+        chats = [chat];
+      }
+    }
 
     if (chats.isEmpty) {
-      print('Ingen chats fundet til udtraekning.');
+      print('Ingen chats fundet til udtrækning.');
       return;
     }
 
@@ -27,7 +38,7 @@ class ChatExtractor {
     }
 
     for (final chat in chats) {
-      final filename = '${chat.id}_${_sanitizeFilename(chat.title)}';
+      final filename = '${_sanitizeFilename(chat.title)}_${chat.id}';
       final outputFile = _getOutputFile(outputPath, filename, format);
       final content = _formatChat(chat, format);
 
@@ -36,68 +47,7 @@ class ChatExtractor {
     }
 
     print(
-      'Udtrækning fuldført! ${chats.length} chat(s) udtrukket til $outputPath',
-    );
-  }
-
-  /// Indlæser chat(s) til udtrækning baseret på chatId
-  Future<List<Chat>> _loadChatsForExtraction(String chatId) async {
-    final chatDir = Directory(config.chatHistoryPath);
-
-    if (!chatDir.existsSync()) {
-      print(
-        'Advarsel: Chat historik mappe ikke fundet: ${config.chatHistoryPath}',
-      );
-      return [];
-    }
-
-    final allChats = <Chat>[];
-
-    try {
-      await for (final entity in chatDir.list()) {
-        if (entity is File && path.extension(entity.path) == '.json') {
-          final id = path.basenameWithoutExtension(entity.path);
-
-          // Hvis vi leder efter en specifik chat og denne ikke matcher, spring over
-          if (chatId != 'alle' &&
-              id != chatId &&
-              (int.tryParse(chatId) ?? 0) - 1 != allChats.length) {
-            continue;
-          }
-
-          try {
-            final content = await File(entity.path).readAsString();
-            final data = jsonDecode(content);
-            final chat = Chat.fromJson(data, id);
-            allChats.add(chat);
-
-            // Hvis vi leder efter en specifik chat med ID og fandt den, stop her
-            if (chatId != 'alle' && id == chatId) {
-              return [chat];
-            }
-          } catch (e) {
-            print('Kunne ikke indlæse ${entity.path}: $e');
-          }
-        }
-      }
-
-      // Hvis vi leder efter en specifik chat med numerisk ID, find den i listen
-      if (chatId != 'alle') {
-        final index = int.tryParse(chatId);
-        if (index != null && index > 0 && index <= allChats.length) {
-          // Sorter efter dato, nyeste først
-          allChats.sort(
-            (a, b) => b.lastMessageTime.compareTo(a.lastMessageTime),
-          );
-          return [allChats[index - 1]];
-        }
-      }
-
-      return allChats;
-    } catch (e) {
-      print('Fejl ved indlæsning af chats: $e');
-      return [];
-    }
+        'Udtrækning fuldført! ${chats.length} chat(s) udtrukket til $outputPath');
   }
 
   /// Formatterer chat til det ønskede output format
@@ -174,21 +124,16 @@ class ChatExtractor {
     buffer.writeln('  <title>${_escapeHtml(chat.title)}</title>');
     buffer.writeln('  <style>');
     buffer.writeln(
-      '    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }',
-    );
+        '    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }');
     buffer.writeln(
-      '    .header { border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }',
-    );
+        '    .header { border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }');
     buffer.writeln(
-      '    .message { margin-bottom: 20px; padding: 10px; border-radius: 5px; }',
-    );
-    buffer.writeln(
-      '    .user { background-color: #f0f0f0; text-align: right; }',
-    );
+        '    .message { margin-bottom: 20px; padding: 10px; border-radius: 5px; }');
+    buffer
+        .writeln('    .user { background-color: #f0f0f0; text-align: right; }');
     buffer.writeln('    .ai { background-color: #e6f7ff; }');
     buffer.writeln(
-      '    .meta { color: #666; font-size: 0.8em; margin-bottom: 5px; }',
-    );
+        '    .meta { color: #666; font-size: 0.8em; margin-bottom: 5px; }');
     buffer.writeln('    .content { white-space: pre-wrap; }');
     buffer.writeln('  </style>');
     buffer.writeln('</head>');
@@ -207,11 +152,9 @@ class ChatExtractor {
 
       buffer.writeln('  <div class="message $cssClass">');
       buffer.writeln(
-        '    <div class="meta">$sender - ${message.timestamp}</div>',
-      );
+          '    <div class="meta">$sender - ${message.timestamp}</div>');
       buffer.writeln(
-        '    <div class="content">${_escapeHtml(message.content)}</div>',
-      );
+          '    <div class="content">${_escapeHtml(message.content)}</div>');
       buffer.writeln('  </div>');
     }
 

@@ -4,6 +4,7 @@ import 'package:dart_console/dart_console.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as path;
 import 'package:collection/collection.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'config.dart';
 import 'chat_model.dart';
 
@@ -15,32 +16,55 @@ class ChatBrowser {
 
   ChatBrowser(this.config);
 
-  /// Indlæser alle chats fra historik-mappen
+  /// Indlæser alle chats fra workspace storage mapperne
   Future<List<Chat>> _loadChats() async {
-    final chatDir = Directory(config.chatHistoryPath);
+    final storageDir = Directory(config.workspaceStoragePath);
 
-    if (!chatDir.existsSync()) {
+    if (!storageDir.existsSync()) {
       print(
-        'Advarsel: Chat historik mappe ikke fundet: ${config.chatHistoryPath}',
-      );
+          'Advarsel: Workspace storage mappe ikke fundet: ${config.workspaceStoragePath}');
       return [];
     }
 
     final chats = <Chat>[];
 
     try {
-      await for (final entity in chatDir.list()) {
-        if (entity is File && path.extension(entity.path) == '.json') {
-          try {
-            final content = await File(entity.path).readAsString();
-            final data = jsonDecode(content);
-            final chat = Chat.fromJson(
-              data,
-              path.basenameWithoutExtension(entity.path),
-            );
-            chats.add(chat);
-          } catch (e) {
-            print('Kunne ikke indlæse ${entity.path}: $e');
+      // Gennemgå alle md5 hash mapper (workspace storage)
+      await for (final entity in storageDir.list()) {
+        if (entity is Directory) {
+          final dbFile = File(path.join(entity.path, 'state.vscdb'));
+
+          // Tjek om der er en state.vscdb fil i mappen
+          if (dbFile.existsSync()) {
+            try {
+              // Åbn SQLite database
+              final db = sqlite3.open(dbFile.path);
+
+              // Hent chat data fra databasen
+              final result = db.select(
+                  "SELECT rowid, [key], value FROM ItemTable WHERE [key] IN "
+                  "('aiService.prompts', 'workbench.panel.aichat.view.aichat.chatdata')");
+
+              // Behandl hver række
+              for (final row in result) {
+                final rowId = row['rowid'] as int;
+                final key = row['key'] as String;
+                final value = row['value'] as String;
+
+                // Forsøg at oprette en Chat fra værdien
+                final chat = Chat.fromSqliteValue(
+                    '${entity.path.split(Platform.pathSeparator).last}_$rowId',
+                    value);
+                if (chat != null) {
+                  chats.add(chat);
+                }
+              }
+
+              // Luk databasen
+              db.dispose();
+            } catch (e) {
+              print('Kunne ikke læse database ${dbFile.path}: $e');
+            }
           }
         }
       }
@@ -59,7 +83,7 @@ class ChatBrowser {
     _chats = await _loadChats();
 
     if (_chats.isEmpty) {
-      print('Ingen chat historikker fundet i ${config.chatHistoryPath}');
+      print('Ingen chat historikker fundet i ${config.workspaceStoragePath}');
       return;
     }
 
@@ -77,12 +101,28 @@ class ChatBrowser {
     }
   }
 
+  /// Henter en specifik chat med ID
+  Future<Chat?> getChat(String chatId) async {
+    if (_chats.isEmpty) {
+      _chats = await _loadChats();
+    }
+
+    // Prøv at parse chatId som et indeks
+    final index = int.tryParse(chatId);
+    if (index != null && index > 0 && index <= _chats.length) {
+      return _chats[index - 1];
+    }
+
+    // Ellers søg efter matching ID
+    return _chats.firstWhereOrNull((chat) => chat.id == chatId);
+  }
+
   /// Viser Text User Interface (TUI) til at browse og se chats
   Future<void> showTUI() async {
     _chats = await _loadChats();
 
     if (_chats.isEmpty) {
-      print('Ingen chat historikker fundet i ${config.chatHistoryPath}');
+      print('Ingen chat historikker fundet i ${config.workspaceStoragePath}');
       return;
     }
 
@@ -163,8 +203,7 @@ class ChatBrowser {
     for (var i = 0; i < _chats.length; i++) {
       final chat = _chats[i];
       final dateStr = dateFormat.format(chat.lastMessageTime);
-      final line =
-          '${_padTruncate((i + 1).toString(), 3)} | '
+      final line = '${_padTruncate((i + 1).toString(), 3)} | '
           '${_padTruncate(chat.title, titleWidth)} | '
           '${_padTruncate(dateStr, dateWidth)} | '
           '${chat.messages.length}';

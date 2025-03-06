@@ -4,10 +4,10 @@ import 'package:path/path.dart' as path;
 
 /// Konfigurationsklasse til at håndtere indstillinger
 class Config {
-  /// Stien til mappen hvor Cursor gemmer chat historikker
-  final String chatHistoryPath;
+  /// Stien til mappen hvor Cursor gemmer workspaceStorage
+  final String workspaceStoragePath;
 
-  Config({required this.chatHistoryPath});
+  Config({required this.workspaceStoragePath});
 
   /// Indlæs konfiguration fra en angivet sti
   static Config load(String configPath) {
@@ -16,30 +16,23 @@ class Config {
       Platform.environment['HOME'] ?? '',
     );
 
-    // Standardplaceringer af Cursor AI chat historik baseret på OS
-    String defaultChatPath;
+    // Standardplaceringer af Cursor AI workspace storage baseret på OS
+    String defaultWorkspacePath;
     if (Platform.isWindows) {
-      defaultChatPath = path.join(
-        Platform.environment['APPDATA'] ?? '',
-        'cursor',
-        'chat_history',
-      );
+      defaultWorkspacePath = path.join(Platform.environment['APPDATA'] ?? '',
+          'Cursor', 'User', 'workspaceStorage');
     } else if (Platform.isMacOS) {
-      defaultChatPath = path.join(
-        Platform.environment['HOME'] ?? '',
-        'Library',
-        'Application Support',
-        'cursor',
-        'chat_history',
-      );
+      defaultWorkspacePath = path.join(
+          Platform.environment['HOME'] ?? '',
+          'Library',
+          'Application Support',
+          'Cursor',
+          'User',
+          'workspaceStorage');
     } else {
       // Linux
-      defaultChatPath = path.join(
-        Platform.environment['HOME'] ?? '',
-        '.config',
-        'cursor',
-        'chat_history',
-      );
+      defaultWorkspacePath = path.join(Platform.environment['HOME'] ?? '',
+          '.config', 'cursor', 'User', 'workspaceStorage');
     }
 
     try {
@@ -47,7 +40,8 @@ class Config {
       if (configFile.existsSync()) {
         final jsonData = jsonDecode(configFile.readAsStringSync());
         return Config(
-          chatHistoryPath: jsonData['chatHistoryPath'] ?? defaultChatPath,
+          workspaceStoragePath:
+              jsonData['workspaceStoragePath'] ?? defaultWorkspacePath,
         );
       }
     } catch (e) {
@@ -56,7 +50,7 @@ class Config {
     }
 
     // Returner standardkonfiguration
-    return Config(chatHistoryPath: defaultChatPath);
+    return Config(workspaceStoragePath: defaultWorkspacePath);
   }
 
   /// Gem konfigurationen til fil
@@ -73,7 +67,9 @@ class Config {
       Directory(configDir).createSync(recursive: true);
     }
 
-    final jsonData = {'chatHistoryPath': chatHistoryPath};
+    final jsonData = {
+      'workspaceStoragePath': workspaceStoragePath,
+    };
 
     configFile.writeAsStringSync(jsonEncode(jsonData));
   }
