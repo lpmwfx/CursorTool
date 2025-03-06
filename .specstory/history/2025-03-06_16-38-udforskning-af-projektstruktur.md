@@ -1069,6 +1069,107 @@ Er der noget mere, du gerne vil tilføje eller ændre i README.md?
 
 ---
 
+_**User**_
+
+Nu vi er igang skulle vi så ikke lave en UI til den jeg kan lægge i ~/Applikationer og som bruger cursor_chat_tool ideen er at UI skal danne rammen om en serie af udviklingsværktøjer vi kan bruge i udvikling så hvordan bevarer vi cursor_chat_tool som den er men også giver den insulate kommunikation fra ~/.cursor til ~/.Applikation 
+
+---
+
+_**Assistant**_
+
+<think>
+Lars ønsker at udvide projektet med en UI, der skal:
+1. Placeres i ~/Applikationer
+2. Bruge cursor_chat_tool som backend
+3. Danne rammen for flere udviklingsværktøjer
+4. Etablere kommunikation mellem ~/.cursor og ~/.Applikation
+
+Vi skal tænke på hvordan vi kan bygge en UI (sandsynligvis en desktop app) der bruger det eksisterende command-line værktøj som backend, men samtidig fungerer som en platform for flere udviklingsværktøjer.
+</think>
+
+Hej Lars! Det er en rigtig god idé at lave en UI til cursor_chat_tool og samtidig gøre den til en del af en større platform for udviklingsværktøjer. Lad os bygge denne løsning med Flutter, da det giver os en moderne UI med god Dart-integration.
+
+Her er planen for hvordan vi kan strukturere dette:
+
+---
+
+_****_
+
+```bash
+mkdir -p ~/Applikationer
+```
+
+```
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$ 
+
+```
+
+---
+
+_****_
+
+Lad os oprette et nyt Flutter-projekt til vores UI-applikation:
+
+---
+
+_****_
+
+Cancelled
+
+---
+
+_****_
+
+
+
+---
+
+_**User**_
+
+~/Applikationer er en systemfolder til apps altså publiseringsfolderen og den er forskellig fra system til system så her i projekt root lav en /tools_ui folder så laver vi applikationen der som en selvstænding projekt men med fælles git med cursor_chat_tool evt flytte hele projektet fil selvstændig folder
+
+---
+
+_**Assistant**_
+
+<think>
+Lars har angivet, at:
+1. ~/Applikationer ikke skal bruges direkte, da det er en systemspecifik folder
+2. Vi skal oprette en /tools_ui mappe i vores projektrod, hvor vi kan lave vores Flutter-applikation
+3. Det skal være et selvstændigt projekt, men dele git-repository med cursor_chat_tool
+4. Vi bør måske flytte hele projektet til en selvstændig mappe for bedre struktur
+
+Så jeg skal:
+1. Oprette en ordentlig projektstruktur med undermappe til CLI-værktøjet og UI
+2. Oprette en tools_ui mappe til Flutter-applikationen
+3. Sikre at hele opsætningen deler git-repository
+</think>
+
+Jeg forstår helt, Lars! Lad os omstrukturere projektet med en bedre mappestruktur, hvor vi bevarer det eksisterende cursor_chat_tool og tilføjer UI-delen i en separat mappe.
+
+Lad os oprette den nye struktur:
+
+---
+
+_****_
+
+```bash
+mkdir -p tools_ui
+```
+
+```
+lpm@lpm-ubunu:~/Repo på HDD/CursorTool$ 
+
+```
+
+---
+
+_****_
+
+Lad os nu omstrukturere hele projektet, så CLI-delen ligger i en separat mappe:
+
+---
+
 
 
 ---
