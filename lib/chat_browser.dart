@@ -78,6 +78,11 @@ class ChatBrowser {
     }
   }
 
+  /// Offentlig metode til at indlæse alle chats
+  Future<List<Chat>> loadAllChats() async {
+    return await _loadChats();
+  }
+
   /// Viser liste over alle chats i konsollen
   Future<void> listChats() async {
     _chats = await _loadChats();

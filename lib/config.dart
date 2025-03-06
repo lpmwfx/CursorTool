@@ -32,7 +32,7 @@ class Config {
     } else {
       // Linux
       defaultWorkspacePath = path.join(Platform.environment['HOME'] ?? '',
-          '.config', 'cursor', 'User', 'workspaceStorage');
+          '.config', 'Cursor', 'User', 'workspaceStorage');
     }
 
     try {

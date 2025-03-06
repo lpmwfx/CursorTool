@@ -17,8 +17,8 @@ class ChatExtractor {
     List<Chat> chats = [];
 
     if (chatId.toLowerCase() == 'alle') {
-      // Hent alle chats ved at kalde _loadChats direkte
-      chats = await browser._loadChats();
+      // Hent alle chats ved at kalde den offentlige metode
+      chats = await browser.loadAllChats();
     } else {
       // Hent specifik chat med den offentlige metode
       final chat = await browser.getChat(chatId);
