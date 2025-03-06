@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
-import 'package:process_run/process_run.dart' show run;
+import 'package:process_run/process_run.dart' as process_run;
 import '../models/chat.dart';
 import 'settings_service.dart';
 
@@ -112,7 +112,8 @@ class ChatService extends ChangeNotifier {
   }
 
   // Kør CLI-kommando
-  Future<dynamic> _runCliCommand(List<String> arguments) async {
-    return await run(_settings.cliPath, arguments);
+  Future<process_run.ProcessResult> _runCliCommand(
+      List<String> arguments) async {
+    return await process_run.run(_settings.cliPath, arguments);
   }
 }
