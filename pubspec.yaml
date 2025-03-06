@@ -1,0 +1,16 @@
+name: cursor_chat_tool
+description: Et værktøj til at browse og ekstrahere chat historik fra Cursor AI IDE
+version: 1.0.0
+
+environment:
+  sdk: '>=2.12.0 <3.0.0'
+
+dependencies:
+  path: ^1.8.0
+  args: ^2.3.0
+  dart_console: ^1.1.0
+  intl: ^0.17.0
+  collection: ^1.16.0
+  
+dev_dependencies:
+  lints: ^2.0.0 
