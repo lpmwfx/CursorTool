@@ -41,26 +41,17 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'macOS tillader ikke appen at læse Cursor\'s chatfiler direkte fra Library/Application Support.',
+                      'macOS tillader ikke appen at læse Cursor\'s chatfiler direkte. Du skal installere CLI-værktøjet for at få adgang til dine chats.',
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        ElevatedButton(
-                          onPressed: () => _showMacOSGuide(context),
-                          child: const Text('Vis vejledning til løsning'),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          onPressed: () => _importCursorChats(context),
-                          icon: const Icon(Icons.cloud_download),
-                          label: const Text('Importér Chats'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ],
+                    ElevatedButton.icon(
+                      onPressed: () => _installCliTool(context),
+                      icon: const Icon(Icons.install_desktop),
+                      label: const Text('Installér CLI Værktøj'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
                   ],
                 ),
@@ -78,17 +69,31 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => settings.toggleDarkMode(),
           ),
           const Divider(),
-          _buildSectionTitle(context, 'Placeringer'),
+          _buildSectionTitle(context, 'CLI Indstillinger'),
           _buildSettingItem(
             context: context,
             title: 'CLI Værktøj',
             description: settings.cliPath,
-            trailing: const Icon(Icons.edit),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit),
+                  onPressed: () => _selectCliPath(context),
+                  tooltip: 'Vælg CLI-fil',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.install_desktop),
+                  onPressed: () => _installCliTool(context),
+                  tooltip: 'Installér CLI-værktøj',
+                ),
+              ],
+            ),
             onTap: () => _selectCliPath(context),
           ),
           _buildSettingItem(
             context: context,
-            title: 'Workspace mappe',
+            title: 'Cursor Workspace',
             description: settings.workspacePath,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -99,11 +104,6 @@ class SettingsScreen extends StatelessWidget {
                   tooltip: 'Vælg mappe',
                 ),
                 IconButton(
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => _editWorkspacePath(context),
-                  tooltip: 'Indtast sti manuelt',
-                ),
-                IconButton(
                   icon: const Icon(Icons.bug_report),
                   onPressed: () => _debugWorkspacePath(context),
                   tooltip: 'Debug sti',
@@ -112,35 +112,17 @@ class SettingsScreen extends StatelessWidget {
             ),
             onTap: () => _editWorkspacePath(context),
           ),
-          _buildSettingItem(
-            context: context,
-            title: 'Output mappe',
-            description: settings.outputPath,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.folder),
-                  onPressed: () => _selectOutputPath(context),
-                  tooltip: 'Vælg mappe',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => _editOutputPath(context),
-                  tooltip: 'Indtast sti manuelt',
-                ),
-              ],
-            ),
-            onTap: () => _selectOutputPath(context),
-          ),
           const Divider(),
-          _buildSectionTitle(context, 'Eksport indstillinger'),
+          _buildSectionTitle(context, 'Database'),
           _buildSettingItem(
             context: context,
-            title: 'Standard format',
-            description: _formatDescription(settings.defaultFormat),
-            trailing: const Icon(Icons.arrow_drop_down),
-            onTap: () => _selectDefaultFormat(context),
+            title: 'Importér Cursor Chats',
+            description: 'Importér chats automatisk fra Cursor',
+            trailing: IconButton(
+              icon: const Icon(Icons.sync),
+              onPressed: () => _autoImportCursorChats(context),
+            ),
+            onTap: () => _autoImportCursorChats(context),
           ),
           const Divider(),
           _buildSectionTitle(context, 'Om'),
@@ -157,18 +139,6 @@ class SettingsScreen extends StatelessWidget {
             description: 'Lars med hjælp fra Claude 3.7 AI',
             trailing: null,
             onTap: null,
-          ),
-          const Divider(),
-          _buildSectionTitle(context, 'Database'),
-          _buildSettingItem(
-            context: context,
-            title: 'Importér Cursor Chats',
-            description: 'Importér chats fra Cursor\'s SQLite databaser',
-            trailing: IconButton(
-              icon: const Icon(Icons.import_export),
-              onPressed: () => _importCursorChats(context),
-            ),
-            onTap: () => _importCursorChats(context),
           ),
         ],
       ),
@@ -435,198 +405,313 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  // Viser vejledning om macOS sandboxing problem
-  void _showMacOSGuide(BuildContext context) {
-    final homeDir = Platform.environment['HOME'] ?? '';
-    final cursorPath = '${homeDir}/Library/Application Support/Cursor/User/workspaceStorage';
-    final docsPath = '${homeDir}/Documents/CursorChats';
+  // Automatisk importering af chats
+  Future<void> _autoImportCursorChats(BuildContext context) async {
+    final chatService = Provider.of<ChatService>(context, listen: false);
     
     showDialog(
       context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        title: Text('Importerer chats...'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            LinearProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Forbinder til Cursor og importerer chats...'),
+          ],
+        ),
+      ),
+    );
+    
+    try {
+      // Forsøg at importere chats automatisk
+      final importedCount = await chatService.autoImportFromCursor();
+      
+      if (context.mounted) {
+        Navigator.pop(context);
+      }
+      
+      if (context.mounted) {
+        if (importedCount > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Importerede $importedCount chats fra Cursor')),
+          );
+        } else {
+          // Fejlhåndtering - vis dialog med flere muligheder
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Automatisk import fejlede'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Appen kunne ikke automatisk importere chats.'),
+                  const SizedBox(height: 8),
+                  const Text('Mulige årsager:'),
+                  const SizedBox(height: 4),
+                  const Text('• CLI-værktøjet er ikke installeret korrekt'),
+                  const Text('• Cursor\'s mappe blev ikke fundet'),
+                  const Text('• Ingen chat-filer fundet i Cursors mappe'),
+                  const SizedBox(height: 16),
+                  const Text('Prøv at installere CLI-værktøjet igen eller vælg Cursor\'s mappe manuelt.'),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Luk'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _installCliTool(context);
+                  },
+                  child: const Text('Installér CLI Værktøj'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _selectWorkspacePath(context);
+                  },
+                  child: const Text('Vælg Cursor Mappe'),
+                ),
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.pop(context);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Fejl ved import: $e')),
+        );
+      }
+    }
+  }
+
+  // Installer CLI-værktøjet til standardplacering
+  Future<void> _installCliTool(BuildContext context) async {
+    final settings = context.read<SettingsService>();
+    
+    // Definer målsti baseret på platform
+    String targetDir;
+    if (Platform.isLinux) {
+      targetDir = path.join(Platform.environment['HOME'] ?? '', '.cursor');
+    } else if (Platform.isMacOS) {
+      targetDir = path.join(
+        Platform.environment['HOME'] ?? '', 
+        'Library', 
+        'Application Support', 
+        'Cursor'
+      );
+    } else {
+      // Fallback for Windows eller andre platforme
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Installation ikke understøttet på denne platform'))
+      );
+      return;
+    }
+    
+    // Vis dialog om at vælge CLI-værktøj
+    final result = await showDialog<String>(
+      context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Løsning på macOS Sandboxing'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'På grund af macOS sikkerhedsbegrænsninger kan appen ikke læse filer direkte fra Cursor\'s mappe.',
-                style: TextStyle(fontWeight: FontWeight.bold),
+        title: const Text('Installér CLI-værktøj'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Vælg CLI-værktøj til installation:'),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              icon: const Icon(Icons.file_copy),
+              label: const Text('Vælg eksisterende CLI-fil'),
+              onPressed: () async {
+                Navigator.of(context).pop('pick');
+              },
+            ),
+            if (Platform.isMacOS || Platform.isLinux)
+              TextButton.icon(
+                icon: const Icon(Icons.folder),
+                label: const Text('Brug indbygget CLI-værktøj'),
+                onPressed: () {
+                  Navigator.of(context).pop('bundled');
+                },
               ),
-              const SizedBox(height: 16),
-              const Text('Følg disse trin for at løse problemet:'),
-              const SizedBox(height: 8),
-              _buildStep(1, 'Åbn Finder'),
-              _buildStep(2, 'Tryk på ⌘+Shift+G eller vælg "Gå til mappe" fra Gå-menuen'),
-              _buildStep(3, 'Indtast og gå til denne sti:'),
-              SelectableText(
-                cursorPath,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-              _buildStep(4, 'Opret en ny mappe i Documents kaldet "CursorChats":'),
-              SelectableText(
-                docsPath,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-              _buildStep(5, 'Kopier alle mapper fra Cursor\'s workspaceStorage til den nye mappe'),
-              _buildStep(6, 'Opdater workspace-stien i denne app til den nye placering'),
-              const SizedBox(height: 16),
-              const Text(
-                'Nu burde appen kunne læse dine Cursor chat-filer fra Documents-mappen, som er tilgængelig inden for macOS sandboxing.',
-                style: TextStyle(fontStyle: FontStyle.italic),
-              ),
-            ],
-          ),
+            TextButton.icon(
+              icon: const Icon(Icons.build),
+              label: const Text('Kompilér CLI-værktøj fra kildekode'),
+              onPressed: () {
+                Navigator.of(context).pop('compile');
+              },
+            ),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _editWorkspacePath(context, prefill: docsPath);
-            },
-            child: const Text('Opsæt sti nu'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Luk'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Annuller'),
           ),
         ],
       ),
     );
-  }
-  
-  Widget _buildStep(int number, String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                number.toString(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(text)),
-        ],
-      ),
-    );
-  }
-
-  // Funktion til at importere chats fra Cursor
-  Future<void> _importCursorChats(BuildContext context) async {
-    final dbService = Provider.of<DatabaseService>(context, listen: false);
-    final chatService = Provider.of<ChatService>(context, listen: false);
     
-    // Hent stier til Cursor databaser
-    final cursorDbFiles = await _findCursorDbFiles();
+    if (result == null) return;
     
-    if (cursorDbFiles.isEmpty) {
-      if (context.mounted) {
+    String? cliPath;
+    
+    if (result == 'pick') {
+      final fileResult = await FilePicker.platform.pickFiles();
+      if (fileResult != null) {
+        cliPath = fileResult.files.single.path;
+      } else {
+        return;
+      }
+    } else if (result == 'bundled') {
+      // Søg efter CLI-værktøj i app-mappen og assets
+      final appDir = path.dirname(Platform.resolvedExecutable);
+      final assetBundle = DefaultAssetBundle.of(context);
+      
+      // Forsøg at læse CLI-værktøj fra assets
+      try {
+        final tempDir = await Directory.systemTemp.createTemp('cursor_tools');
+        final tempPath = path.join(tempDir.path, 'cursor_chat_tool');
+        
+        // Forsøg at ekstrahere CLI-værktøjet fra assets
+        bool foundInAssets = false;
+        try {
+          // Check for OS specifikke versioner
+          String assetPath;
+          if (Platform.isMacOS) {
+            assetPath = 'assets/bin/cursor_chat_tool_macos';
+          } else if (Platform.isLinux) {
+            assetPath = 'assets/bin/cursor_chat_tool_linux';
+          } else {
+            assetPath = 'assets/bin/cursor_chat_tool';
+          }
+          
+          final byteData = await assetBundle.load(assetPath);
+          
+          // Skriv bytedataen til midlertidig fil
+          final bytes = byteData.buffer.asUint8List(
+            byteData.offsetInBytes, byteData.lengthInBytes);
+          await File(tempPath).writeAsBytes(bytes);
+          
+          // Gør filen eksekverbar
+          await Process.run('chmod', ['+x', tempPath]);
+          
+          cliPath = tempPath;
+          foundInAssets = true;
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('CLI-værktøj fundet i app-pakken'))
+          );
+        } catch (e) {
+          print('Kunne ikke læse CLI-værktøj fra assets: $e');
+        }
+        
+        if (!foundInAssets) {
+          // Hvis vi ikke fandt i assets, tjek standard placeringer
+          final possiblePaths = [
+            path.join(appDir, 'cursor_chat_tool'),
+            path.join(appDir, 'Resources', 'cursor_chat_tool'),
+            path.join(appDir, 'Resources', 'flutter_assets', 'assets', 'bin', 'cursor_chat_tool'),
+          ];
+          
+          for (final possiblePath in possiblePaths) {
+            if (await File(possiblePath).exists()) {
+              cliPath = possiblePath;
+              break;
+            }
+          }
+        }
+        
+        if (cliPath == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Kunne ikke finde CLI-værktøj i app-pakken'))
+          );
+          return;
+        }
+      } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ingen Cursor database filer fundet')),
+          SnackBar(content: Text('Fejl ved læsning af CLI-værktøj fra assets: $e'))
+        );
+        return;
+      }
+    } else if (result == 'compile') {
+      // Vis dialog med besked om at dette ikke er implementeret endnu
+      if (context.mounted) {
+        await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Ikke implementeret'),
+            content: const Text('Denne funktion er ikke implementeret endnu. Vælg venligst en anden installationsmetode.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
         );
       }
       return;
     }
     
-    // Vis dialog med valg af filer
-    if (context.mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => _ImportCursorDbDialog(
-          dbFiles: cursorDbFiles, 
-          dbService: dbService,
-          chatService: chatService,
-        ),
-      );
-    }
-  }
-  
-  // Find Cursor database filer
-  Future<List<File>> _findCursorDbFiles() async {
-    List<File> result = [];
+    if (cliPath == null) return;
+    
+    // Vis dialog med fremgang
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        title: Text('Installerer CLI-værktøj...'),
+        content: LinearProgressIndicator(),
+      ),
+    );
     
     try {
-      // Prøv først med FilePicker - giver brugeren kontrol
-      FilePickerResult? pickerResult = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['vscdb'],
-        allowMultiple: true,
+      // Opret målmappe hvis den ikke findes
+      final targetDirObj = Directory(targetDir);
+      if (!await targetDirObj.exists()) {
+        await targetDirObj.create(recursive: true);
+      }
+      
+      // Definer målfilsti
+      final targetPath = path.join(targetDir, 'cursor_chat_tool');
+      
+      // Kopier filen
+      await File(cliPath).copy(targetPath);
+      
+      // Gør filen eksekverbar (på Unix)
+      if (Platform.isLinux || Platform.isMacOS) {
+        await Process.run('chmod', ['+x', targetPath]);
+      }
+      
+      // Opdater indstillinger
+      await settings.updateCliPath(targetPath);
+      
+      // Luk fremgangsdialogen
+      Navigator.of(context).pop();
+      
+      // Vis bekræftelsesbesked
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('CLI-værktøj installeret til $targetPath'))
       );
-      
-      if (pickerResult != null && pickerResult.files.isNotEmpty) {
-        // Bruger har valgt filer
-        for (final file in pickerResult.files) {
-          if (file.path != null) {
-            result.add(File(file.path!));
-          }
-        }
-        return result;
-      }
-      
-      // Alternativt, prøv at finde Cursor databaser automatisk
-      if (Platform.isMacOS) {
-        final homeDir = Platform.environment['HOME'] ?? '';
-        final cursorDir = Directory(path.join(
-          homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage'
-        ));
-        
-        if (await cursorDir.exists()) {
-          // List alle mapper i workspaceStorage
-          await for (final entry in cursorDir.list()) {
-            if (entry is Directory) {
-              final dbFile = File(path.join(entry.path, 'state.vscdb'));
-              if (await dbFile.exists()) {
-                result.add(dbFile);
-              }
-            }
-          }
-        }
-      } else if (Platform.isLinux) {
-        final homeDir = Platform.environment['HOME'] ?? '';
-        final cursorDir = Directory(path.join(
-          homeDir, '.config', 'Cursor', 'User', 'workspaceStorage'
-        ));
-        
-        if (await cursorDir.exists()) {
-          await for (final entry in cursorDir.list()) {
-            if (entry is Directory) {
-              final dbFile = File(path.join(entry.path, 'state.vscdb'));
-              if (await dbFile.exists()) {
-                result.add(dbFile);
-              }
-            }
-          }
-        }
-      }
     } catch (e) {
-      print('Fejl ved søgning efter Cursor database filer: $e');
+      // Luk fremgangsdialogen
+      Navigator.of(context).pop();
+      
+      // Vis fejlbesked
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Fejl ved installation: $e'))
+      );
     }
-    
-    return result;
   }
 }
 

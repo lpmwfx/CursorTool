@@ -46,6 +46,7 @@ dependencies:
   dart_console: ^1.2.0  # CLI-komponent
   vector_math: ^2.1.4
   flutter_markdown: ^0.6.18  # Til visning af markdown
+  process_run: ^0.14.1  # Til at køre eksterne processer
 
 dev_dependencies:
   flutter_test:
@@ -72,6 +73,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/
+    - assets/bin/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
