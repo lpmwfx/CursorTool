@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'package:args/args.dart';
 import 'package:path/path.dart' as path;
-import 'package:cursor_tool_ui/cli/lib/chat_browser.dart';
-import 'package:cursor_tool_ui/cli/lib/chat_extractor.dart';
-import 'package:cursor_tool_ui/cli/lib/config.dart';
+import 'package:cursor_tool_ui/cli/chat_browser.dart';
+import 'package:cursor_tool_ui/cli/chat_extractor.dart';
+import 'package:cursor_tool_ui/cli/config.dart';
 
 void main(List<String> arguments) async {
   final parser = ArgParser()
@@ -52,18 +52,32 @@ void main(List<String> arguments) async {
       final browser = ChatBrowser(config);
       await browser.listChats();
     } else if (results['extract'] != null) {
-      final extractor = ChatExtractor(config);
+      final chatId = results['extract'] as String;
       final outputPath = results['output'] as String;
       final format = results['format'] as String;
-
-      await extractor.extract(results['extract'] as String, outputPath, format);
+      
+      final browser = ChatBrowser(config);
+      final chat = await browser.getChat(chatId);
+      
+      if (chat != null) {
+        final outputDir = Directory(outputPath);
+        if (!outputDir.existsSync()) {
+          outputDir.createSync(recursive: true);
+        }
+        
+        final outputFile = File(path.join(outputPath, '${chat.id}.$format'));
+        outputFile.writeAsStringSync(chat.toString());
+        print('Chat gemt til ${outputFile.path}');
+      } else {
+        print('Chat med ID $chatId ikke fundet');
+      }
     } else {
       // Som standard viser vi TUI browser
       final browser = ChatBrowser(config);
       await browser.showTUI();
     }
   } catch (e) {
-    print('Fejl: \${e.toString()}');
+    print('Fejl: ${e.toString()}');
     _printUsage(parser);
     exit(1);
   }

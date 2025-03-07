@@ -3,210 +3,247 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
-import 'package:process_run/process_run.dart' show run;
 import '../models/chat.dart';
+import '../cli/chat_browser.dart';
+import '../cli/chat_extractor.dart';
+import '../cli/config.dart';
 import 'settings_service.dart';
 
-// Forenklet version uden isolates for at sikre stabilitet
+// Integreret version der bruger den integrerede CLI-kode
 class ChatService extends ChangeNotifier {
   final SettingsService _settings;
   List<Chat> _chats = [];
   bool _isLoading = false;
   String _lastError = '';
+  String _debugInfo = '';
 
   ChatService(this._settings);
 
   List<Chat> get chats => _chats;
   bool get isLoading => _isLoading;
   String get lastError => _lastError;
+  String get debugInfo => _debugInfo;
 
-  // Kør CLI-kommando på en sikker måde
-  Future<ProcessResult> _runCliCommand(List<String> arguments) async {
-    print('Kører CLI-kommando: ${_settings.cliPath} ${arguments.join(' ')}');
-    try {
-      return await compute(_computeRunner, {
-        'cliPath': _settings.cliPath,
-        'arguments': arguments,
-      });
-    } catch (e) {
-      print('Fejl ved kørsel af CLI-kommando: $e');
-      // Returnerer en dummy ProcessResult ved fejl
-      return ProcessResult(
-          -1, -1, 'Kunne ikke køre kommando: $e', 'Process kunne ikke startes');
+  // Debug funktion til at tjekke workspace sti
+  Future<String> debugWorkspacePath() async {
+    final buffer = StringBuffer();
+    final workspacePath = _settings.workspacePath;
+    
+    buffer.writeln('Debug info for workspace sti:');
+    buffer.writeln('-----------------------------');
+    buffer.writeln('Konfigureret sti: $workspacePath');
+    buffer.writeln('Kører på: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}');
+    
+    if (Platform.isMacOS) {
+      buffer.writeln('\nMacOS Sandbox Info:');
+      buffer.writeln('App bundle: ${Platform.resolvedExecutable}');
+      try {
+        final homeDir = Platform.environment['HOME'] ?? '';
+        final containerDir = Directory(homeDir);
+        buffer.writeln('Sandbox home: $homeDir');
+        
+        // List directories der er tilgængelige
+        buffer.writeln('Tilgængelige mapper i HOME:');
+        final homeDirs = await containerDir.list().toList();
+        for (var dir in homeDirs) {
+          buffer.writeln('  ${dir.path}');
+        }
+        
+        // Vis Documents og Library directories hvis de eksisterer
+        final docsDir = Directory(path.join(homeDir, 'Documents'));
+        final libDir = Directory(path.join(homeDir, 'Library'));
+        
+        if (await docsDir.exists()) {
+          buffer.writeln('Documents mappe: ${docsDir.path} (tilgængelig)');
+        } else {
+          buffer.writeln('Documents mappe: ikke tilgængelig');
+        }
+        
+        if (await libDir.exists()) {
+          buffer.writeln('Library mappe: ${libDir.path} (tilgængelig)');
+          
+          // Tjek om vi kan tilgå Application Support
+          final appSupportDir = Directory(path.join(libDir.path, 'Application Support'));
+          if (await appSupportDir.exists()) {
+            buffer.writeln('Application Support mappe: ${appSupportDir.path} (tilgængelig)');
+          } else {
+            buffer.writeln('Application Support mappe: ikke tilgængelig');
+          }
+        } else {
+          buffer.writeln('Library mappe: ikke tilgængelig');
+        }
+      } catch (e) {
+        buffer.writeln('Fejl ved tjek af sandbox: $e');
+      }
     }
-  }
-
-  // Kør en CLI-kommando direkte og returner resultatet
-  Future<ProcessResult> runDirectCliCommand(List<String> arguments) async {
+    
+    // Tjek om mappen eksisterer
+    final workspaceDir = Directory(workspacePath);
+    bool exists = false;
     try {
-      // Tjek at CLI-værktøjet eksisterer
-      final cliPath = _settings.cliPath;
-      final cliFile = File(cliPath);
-
-      // Kontroller om filen eksisterer og er eksekverbar
-      if (await cliFile.exists()) {
-        print('CLI-værktøj fundet på disk: $cliPath');
-
-        // Tjek om filen er eksekverbar på Unix-systemer
-        if (!Platform.isWindows) {
-          try {
-            final stat = await cliFile.stat();
-            final isExecutable =
-                stat.mode & 0x1 != 0; // Check if executable bit is set
-
-            if (!isExecutable) {
-              print(
-                  'Advarsel: CLI-værktøjet er ikke markeret som eksekverbart');
+      exists = await workspaceDir.exists();
+      buffer.writeln('\nMappe eksisterer: ${exists ? 'JA' : 'NEJ'}');
+    } catch (e) {
+      buffer.writeln('\nFejl ved tjek om mappe eksisterer: $e');
+    }
+    
+    if (exists) {
+      try {
+        // List indhold i mappen
+        buffer.writeln('Indhold i mappen:');
+        final entities = await workspaceDir.list().toList();
+        
+        if (entities.isEmpty) {
+          buffer.writeln('  (Tom mappe)');
+        } else {
+          for (var entity in entities) {
+            final type = entity is Directory ? '[D]' : '[F]';
+            buffer.writeln('  $type ${path.basename(entity.path)}');
+            
+            // Hvis det er en mappe, tjek om den indeholder state.vscdb
+            if (entity is Directory) {
+              try {
+                final dbFile = File(path.join(entity.path, 'state.vscdb'));
+                final dbExists = await dbFile.exists();
+                if (dbExists) {
+                  buffer.writeln('    ✓ Indeholder state.vscdb');
+                }
+              } catch (e) {
+                buffer.writeln('    Fejl ved tjek af state.vscdb: $e');
+              }
             }
-          } catch (e) {
-            print('Fejl ved tjek af eksekverbar status: $e');
           }
         }
-      } else {
-        print(
-            'CLI-værktøj ikke fundet som fil. Prøver som system-kommando: $cliPath');
+      } catch (e) {
+        buffer.writeln('Fejl ved læsning af mappens indhold: $e');
       }
-
-      // Kør kommandoen med alle argumenter
-      print('Kører kommando: $cliPath med args: $arguments');
-
-      return await Process.run(
-        cliPath,
-        arguments,
-        workingDirectory: _settings.workspacePath,
-        runInShell: true,
-      );
-    } catch (e) {
-      print('Fejl ved kørsel af CLI-kommando: $e');
-      throw Exception('Fejl ved kørsel af CLI-kommando: $e');
     }
+    
+    // Tjek alternativer
+    buffer.writeln('\nTjekker alternative stier:');
+    
+    final possiblePaths = <String>[];
+    final homeDir = Platform.environment['HOME'] ?? '';
+    
+    if (Platform.isMacOS) {
+      possiblePaths.addAll([
+        path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage'),
+        path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User'),
+        path.join(homeDir, 'Library', 'Application Support', 'Cursor'),
+        path.join('/Applications/Cursor.app/Contents/Resources/app/extensions'),
+        // Sandboxed app locations
+        path.join(homeDir, 'Documents', 'CursorChats'),
+        path.join(homeDir, 'Documents'),
+      ]);
+    } else if (Platform.isLinux) {
+      possiblePaths.addAll([
+        path.join(homeDir, '.config', 'Cursor', 'User', 'workspaceStorage'),
+        path.join(homeDir, '.cursor', 'workspaceStorage'),
+      ]);
+    }
+    
+    for (final testPath in possiblePaths) {
+      if (testPath == workspacePath) continue; // Skip den nuværende sti
+      
+      final dir = Directory(testPath);
+      bool testExists = false;
+      try {
+        testExists = await dir.exists();
+        buffer.writeln('$testPath: ${testExists ? 'Eksisterer' : 'Findes ikke'}');
+      } catch (e) {
+        buffer.writeln('$testPath: Fejl ved tjek: $e');
+        continue;
+      }
+      
+      if (testExists) {
+        try {
+          final entities = await dir.list().toList();
+          buffer.writeln('  Indeholder ${entities.length} elementer');
+          
+          // Vis op til 5 elementer
+          int count = 0;
+          for (var entity in entities) {
+            if (count++ >= 5) {
+              buffer.writeln('  ... og ${entities.length - 5} flere');
+              break;
+            }
+            final type = entity is Directory ? '[D]' : '[F]';
+            buffer.writeln('  $type ${path.basename(entity.path)}');
+          }
+        } catch (e) {
+          buffer.writeln('  Fejl ved læsning: $e');
+        }
+      }
+    }
+    
+    // Tilføj en anbefaling
+    buffer.writeln('\nAnbefaling:');
+    if (Platform.isMacOS) {
+      buffer.writeln('På macOS anbefales det at kopiere dine chat-filer fra:');
+      buffer.writeln('${path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage')}');
+      buffer.writeln('til en mappe i Documents, f.eks:');
+      buffer.writeln('${path.join(homeDir, 'Documents', 'CursorChats')}');
+      buffer.writeln('\nSandbox-begrænsninger forhindrer adgang til mange system-mapper.');
+    }
+    
+    final result = buffer.toString();
+    _debugInfo = result;
+    notifyListeners();
+    return result;
   }
 
-  // Hent alle chats via CLI-værktøjet - MED COMPUTE
+  // Hent alle chats via integreret CLI-kode
   Future<void> loadChats() async {
     _isLoading = true;
     _lastError = '';
     notifyListeners();
 
     try {
-      print('Starter indlæsning af chats direkte fra CLI-output');
-
-      // Tjek om output-mappen eksisterer
-      final outputDir = Directory(_settings.outputPath);
-      if (!await outputDir.exists()) {
-        print('Output-mappen findes ikke. Opretter: ${_settings.outputPath}');
-        await outputDir.create(recursive: true);
-      }
-
-      // Kør CLI-kommando direkte med --list i compute
-      print('Kører CLI-kommando: ${_settings.cliPath} --list');
-      final result = await _runCliCommand(['--list']);
-
-      print('CLI-kommando afsluttet med kode: ${result.exitCode}');
-
-      if (result.exitCode != 0) {
-        _lastError = 'Fejl ved indlæsning af chats: ${result.stderr}';
+      // Opret config med indstillinger
+      print('Opretter Config med workspacePath: ${_settings.workspacePath}');
+      final config = Config(workspaceStoragePath: _settings.workspacePath);
+      
+      // Brug ChatBrowser direkte
+      print('Opretter ChatBrowser og indlæser chats');
+      final browser = ChatBrowser(config);
+      final chatHistories = await browser.loadAllChats();
+      
+      if (chatHistories.isEmpty) {
+        _lastError = 'Ingen chats fundet i ${_settings.workspacePath}';
         _isLoading = false;
         notifyListeners();
         return;
       }
-
-      // Parse stdout direkte
-      final stdoutStr = result.stdout.toString();
-      print('Stdout længde: ${stdoutStr.length} tegn');
-
-      // Extract chat information fra stdout
-      _chats = [];
-
-      // Find alle linjer der indeholder chat information
-      final lines = stdoutStr.split('\n');
-      final chatLines = <String>[];
-
-      bool startedChats = false;
-      for (final line in lines) {
-        if (line.contains('ID | Titel | Dato | Antal')) {
-          startedChats = true;
-          continue;
-        }
-        if (startedChats &&
-            line.trim().isNotEmpty &&
-            !line.contains('Fandt') &&
-            !line.contains('-------')) {
-          chatLines.add(line.trim());
-        }
-      }
-
-      print('Fandt ${chatLines.length} chat-linjer i output');
-
-      // Parse hver chat-linje
-      for (final line in chatLines) {
-        try {
-          // Format: ID | Titel | Dato | Antal
-          final parts = line.split('|');
-          if (parts.length >= 4) {
-            final id = parts[0].trim();
-            final title = parts[1].trim();
-            final dato = parts[2].trim();
-            final antalStr = parts[3].trim();
-            final antal = int.tryParse(antalStr) ?? 0;
-
-            print(
-                'Parsede chat: ID=$id, Titel=$title, Dato=$dato, Antal=$antal');
-
-            // Opret en liste af beskeder
-            final messages = <ChatMessage>[];
-
-            // Sikre at vi altid har mindst én besked for at indikere at dette er en forenklet visning
-            messages.add(
-              ChatMessage(
-                content:
-                    'Denne chat viser kun oversigten. Klik på chat for at se komplet indhold.',
-                isUser: false,
-                timestamp: DateTime.now(),
-              ),
-            );
-
-            // Tilføj også en bruger-besked for at sikre visning af begge roller
-            if (antal > 1) {
-              messages.add(
-                ChatMessage(
-                  content:
-                      'Denne chat indeholder $antal beskeder i alt. Klik for at se dem alle.',
-                  isUser: true,
-                  timestamp:
-                      DateTime.now().subtract(const Duration(minutes: 5)),
-                ),
-              );
-            }
-
-            // Opret Chat objekt med fejlhåndtering
-            try {
-              final chat = Chat(
-                id: id,
-                title: title,
-                messages: messages,
-              );
-              _chats.add(chat);
-            } catch (e) {
-              print('Fejl ved oprettelse af Chat objekt: $e');
-            }
-          }
-        } catch (e) {
-          print('Fejl ved parsing af chat-linje: $e, Linje: $line');
-        }
-      }
-
-      // Sorter chats efter ID (da vi ikke har rigtige lastMessageTime)
-      if (_chats.isNotEmpty) {
-        print('Sorterer ${_chats.length} chats');
-        // Sorter med højeste ID først (nyeste chats øverst)
-        _chats.sort((a, b) => int.parse(b.id).compareTo(int.parse(a.id)));
-      } else {
-        print('Ingen chats at sortere');
-      }
-    } catch (e) {
-      print('Fejl i loadChats: $e');
-      _lastError = 'Fejl: $e';
+      
+      print('Fandt ${chatHistories.length} chats, konverterer til model');
+      
+      // Konverter til vores Chat-model
+      _chats = chatHistories.map((history) {
+        final messages = history.messages.map((msg) {
+          return ChatMessage(
+            content: msg.content,
+            isUser: msg.isUser,
+            timestamp: msg.timestamp,
+          );
+        }).toList();
+        
+        return Chat(
+          id: history.id,
+          title: history.title.length > 50 
+              ? '${history.title.substring(0, 47)}...' 
+              : history.title,
+          messages: messages,
+        );
+      }).toList();
+      
+      // Sorter efter seneste besked
+      _chats.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
+      print('Færdig med at indlæse ${_chats.length} chats');
+      
+    } catch (e, stackTrace) {
+      print('Fejl ved indlæsning af chats: $e');
+      print('Stack trace: $stackTrace');
+      _lastError = 'Fejl ved indlæsning af chats: $e';
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -218,231 +255,264 @@ class ChatService extends ChangeNotifier {
     _isLoading = true;
     _lastError = '';
     notifyListeners();
-
+    
     try {
-      print('Starter udtrækning af chat ID $chatId i format $format');
-
-      // Tjek om output-mappen eksisterer
-      final outputDir = Directory(_settings.outputPath);
-      if (!await outputDir.exists()) {
-        print('Output-mappen findes ikke. Opretter: ${_settings.outputPath}');
-        await outputDir.create(recursive: true);
-      }
-
-      // Kør extract kommandoen
-      print(
-          'Kører extract kommando: ${_settings.cliPath} --extract $chatId --format $format --output ${_settings.outputPath}');
-      final result = await _runCliCommand([
-        '--extract',
-        chatId,
-        '--format',
-        format,
-        '--output',
-        _settings.outputPath
-      ]);
-
-      print('CLI-kommando afsluttet med kode: ${result.exitCode}');
-      if (result.stdout.toString().isNotEmpty) {
-        print(
-            'Stdout første 100 tegn: ${result.stdout.toString().substring(0, math.min(100, result.stdout.toString().length))}...');
-      }
-
-      if (result.exitCode != 0) {
-        _lastError = 'Fejl ved udtrækning af chat: ${result.stderr}';
-        print('Stderr: ${result.stderr}');
-        _isLoading = false;
-        notifyListeners();
+      // Opret config
+      final config = Config(
+        workspaceStoragePath: _settings.workspacePath,
+      );
+      
+      // Hent chat med ChatBrowser
+      final browser = ChatBrowser(config);
+      final chat = await browser.getChat(chatId);
+      
+      if (chat == null) {
+        _lastError = 'Chat med ID $chatId blev ikke fundet';
         return false;
       }
-
-      // Check stdout for filnavne - CLI udskriver normalt "Chat udtrukket til: /sti/til/fil.format"
-      String outputFilePath = '';
-      final stdoutStr = result.stdout.toString();
-      final regExp = RegExp(r'Chat udtrukket til: ([^\r\n]+)');
-      final match = regExp.firstMatch(stdoutStr);
-
-      if (match != null && match.groupCount >= 1) {
-        outputFilePath = match.group(1)!.trim();
-        print('Fandt output-fil fra CLI output: $outputFilePath');
-
-        // Tjek om filen eksisterer
-        final outputFile = File(outputFilePath);
-        if (await outputFile.exists()) {
-          print('Output-fil bekræftet: $outputFilePath');
-
-          // Hvis formatet er JSON, kopiér til standardnavnet chatId.json i output-mappen
-          if (format == 'json') {
-            final standardOutputFile =
-                File('${_settings.outputPath}/$chatId.json');
-            try {
-              final jsonContent = await outputFile.readAsString();
-              // Forsøg at validere JSON
-              json.decode(jsonContent); // Vil fejle hvis ikke valid JSON
-              await standardOutputFile.writeAsString(jsonContent);
-              print(
-                  'Kopieret JSON til standard filnavn: ${standardOutputFile.path}');
-            } catch (e) {
-              print('Fejl ved kopiering eller validering af JSON: $e');
-            }
-          }
-
-          return true;
-        }
+      
+      // Opret output-mappen hvis den ikke findes
+      final outputDir = Directory(_settings.outputPath);
+      if (!outputDir.existsSync()) {
+        outputDir.createSync(recursive: true);
       }
-
-      // Alternativ: Tjek standard placeringen chatId.format i output-mappen
-      final standardOutputFile =
-          File('${_settings.outputPath}/$chatId.$format');
-      if (await standardOutputFile.exists()) {
-        print('Fandt standard output-fil: ${standardOutputFile.path}');
-        return true;
+      
+      // Generer filnavn baseret på format
+      final fileName = '${chat.id}.$format';
+      final outputFile = path.join(_settings.outputPath, fileName);
+      
+      // Gem chat i det ønskede format
+      String content;
+      switch (format.toLowerCase()) {
+        case 'json':
+          content = jsonEncode(chat.toJson());
+          break;
+        case 'markdown':
+        case 'md':
+          content = _formatAsMarkdown(chat);
+          break;
+        case 'html':
+          content = _formatAsHtml(chat);
+          break;
+        case 'text':
+        default:
+          content = _formatAsText(chat);
+          break;
       }
-
-      // Forsøg at gemme stdout til fil som sidste udvej
-      if (stdoutStr.trim().isNotEmpty && !stdoutStr.contains('Brug:')) {
-        // Fjern CLI outputtekst som "Chat udtrukket til:" fra begyndelsen
-        String contentToSave = stdoutStr;
-
-        // Hvis det er JSON, forsøg at finde JSON indhold (første "{" til sidste "}")
-        if (format == 'json') {
-          final jsonStartIdx = stdoutStr.indexOf('{');
-          final jsonEndIdx = stdoutStr.lastIndexOf('}');
-
-          if (jsonStartIdx >= 0 && jsonEndIdx > jsonStartIdx) {
-            contentToSave = stdoutStr.substring(jsonStartIdx, jsonEndIdx + 1);
-            print('Ekstraheret mulig JSON-indhold fra output');
-
-            // Valider JSON
-            try {
-              json.decode(contentToSave);
-              print('JSON valideret og er gyldig');
-            } catch (e) {
-              print('Ekstraheret indhold er ikke gyldig JSON: $e');
-              contentToSave =
-                  '{"error": "Kunne ikke udtrække gyldig JSON", "rawOutput": ${json.encode(stdoutStr)}}';
-            }
-          } else {
-            // Ingen JSON fundet, opret et simpelt JSON-objekt med outputtet
-            contentToSave =
-                '{"error": "Ingen JSON data fundet", "rawOutput": ${json.encode(stdoutStr)}}';
-          }
-        }
-
-        print('Gemmer manuelt indhold til fil: ${standardOutputFile.path}');
-        try {
-          await standardOutputFile.writeAsString(contentToSave);
-          print('Gemt indhold til fil');
-          return true;
-        } catch (e) {
-          print('Fejl ved manuel gemning af output: $e');
-          _lastError = 'Kunne ikke gemme output til fil: $e';
-        }
-      } else {
-        // Fejlbesked baseret på indhold
-        if (stdoutStr.contains('Brug:')) {
-          _lastError =
-              'CLI-værktøjet kunne ikke forstå kommandoen. Tjek at værktøjet er den rette version.';
-        } else {
-          _lastError = 'Ingen output genereret ved udtrækning.';
-        }
-      }
-
-      _isLoading = false;
-      notifyListeners();
-      return false;
+      
+      // Skriv til fil
+      File(outputFile).writeAsStringSync(content);
+      
+      return true;
     } catch (e) {
-      _lastError = 'Fejl ved udtrækning: $e';
-      print('Extract fejl: $e');
+      _lastError = 'Fejl ved udtrækning af chat: $e';
       return false;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
+  
+  // Formater chat som tekst
+  String _formatAsText(dynamic chat) {
+    final buffer = StringBuffer();
+    buffer.writeln('Chat: ${chat.title}');
+    buffer.writeln('ID: ${chat.id}');
+    buffer.writeln('');
 
-  // Vis TUI browseren
-  Future<bool> showTuiBrowser() async {
-    _isLoading = true;
-    _lastError = '';
-    notifyListeners();
-
-    try {
-      print('Forsøger at starte CLI-værktøjet: ${_settings.cliPath}');
-
-      // Tjek om CLI-værktøjet eksisterer
-      final cliFile = File(_settings.cliPath);
-      if (!cliFile.existsSync()) {
-        print('CLI-værktøj ikke fundet på stien: ${_settings.cliPath}');
-
-        // Let's check few obvious paths
-        final homeDir = Platform.environment['HOME'] ?? '';
-        final possiblePaths = [
-          path.join(homeDir, '.cursor', 'cursor_chat_tool'),
-          path.join(homeDir, 'Repo på HDD', 'CursorTool', 'cursor_chat_cli',
-              'cursor_chat_tool'),
-          '/usr/local/bin/cursor_chat_tool',
-        ];
-
-        bool found = false;
-        for (final testPath in possiblePaths) {
-          if (File(testPath).existsSync()) {
-            print('Fandt CLI-værktøj på alternativ sti: $testPath');
-            await _settings.updateCliPath(testPath);
-            found = true;
-            break;
-          }
-        }
-
-        if (!found) {
-          throw Exception(
-              'CLI-værktøj kunne ikke findes: ${_settings.cliPath}');
-        }
-      }
-
-      // Kører CLI-værktøjet med --list for at undgå TUI-mode der låser terminalen
-      print('Kører CLI-værktøj med --list i stedet for TUI browseren');
-      final result = await _runCliCommand(['--list']);
-
-      print('CLI kommando returnerede med kode: ${result.exitCode}');
-
-      if (result.exitCode != 0) {
-        throw Exception(
-            'CLI returnerede fejlkode ${result.exitCode}: ${result.stderr}');
-      }
-
-      // Auto-opdater chat-listen med det samme
-      print('Genindlæser chats efter vellykket kommando');
-      await loadChats();
-
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _lastError = 'Fejl ved start af CLI-værktøj: $e';
-      print('CLI fejl: $e');
-      _isLoading = false;
-      notifyListeners();
-      return false;
+    for (final message in chat.messages) {
+      final timestamp = message.timestamp;
+      buffer.writeln('${message.isUser ? "USER" : "ASSISTANT"} (${timestamp.toString()}):');
+      buffer.writeln(message.content);
+      buffer.writeln('');
     }
+
+    return buffer.toString();
   }
-}
 
-// Helper function til at køre CLI-kommandoer i en isoleret tråd
-Future<ProcessResult> _computeRunner(Map<String, dynamic> params) async {
-  final cliPath = params['cliPath'] as String;
-  final arguments = params['arguments'] as List<dynamic>;
+  // Formater chat som markdown
+  String _formatAsMarkdown(dynamic chat) {
+    final buffer = StringBuffer();
+    buffer.writeln('# ${chat.title}');
+    buffer.writeln('');
+    buffer.writeln('*Chat ID: ${chat.id}*');
+    buffer.writeln('');
 
-  try {
-    return await run(
-      cliPath,
-      arguments.cast<String>(),
-      runInShell: true,
-      stdoutEncoding: const Utf8Codec(),
-      stderrEncoding: const Utf8Codec(),
-    );
-  } catch (e) {
-    // Returnerer en dummy ProcessResult ved fejl
-    return ProcessResult(
-        -1, -1, 'Compute fejl: $e', 'Compute kunne ikke køre processen');
+    for (final message in chat.messages) {
+      final timestamp = message.timestamp;
+      buffer.writeln('## ${message.isUser ? "USER" : "ASSISTANT"} - ${timestamp.toString()}');
+      buffer.writeln('');
+      buffer.writeln(message.content);
+      buffer.writeln('');
+      buffer.writeln('---');
+      buffer.writeln('');
+    }
+
+    return buffer.toString();
+  }
+
+  // Formater chat som HTML
+  String _formatAsHtml(dynamic chat) {
+    final buffer = StringBuffer();
+    buffer.writeln('<!DOCTYPE html>');
+    buffer.writeln('<html>');
+    buffer.writeln('<head>');
+    buffer.writeln('  <meta charset="UTF-8">');
+    buffer.writeln('  <meta name="viewport" content="width=device-width, initial-scale=1.0">');
+    buffer.writeln('  <title>${chat.title}</title>');
+    buffer.writeln('  <style>');
+    buffer.writeln('    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }');
+    buffer.writeln('    .message { margin-bottom: 20px; padding: 10px; border-radius: 5px; }');
+    buffer.writeln('    .user { background-color: #e6f7ff; }');
+    buffer.writeln('    .assistant { background-color: #f0f0f0; }');
+    buffer.writeln('    .timestamp { font-size: 0.8em; color: #666; }');
+    buffer.writeln('  </style>');
+    buffer.writeln('</head>');
+    buffer.writeln('<body>');
+    buffer.writeln('  <h1>${chat.title}</h1>');
+    buffer.writeln('  <p><em>Chat ID: ${chat.id}</em></p>');
+
+    for (final message in chat.messages) {
+      final timestamp = message.timestamp;
+      final isUser = message.isUser;
+      buffer.writeln('  <div class="message ${isUser ? 'user' : 'assistant'}">');
+      buffer.writeln('    <div class="timestamp">${isUser ? "USER" : "ASSISTANT"} - ${timestamp.toString()}</div>');
+      buffer.writeln('    <div class="content">${_htmlEscape(message.content)}</div>');
+      buffer.writeln('  </div>');
+    }
+
+    buffer.writeln('</body>');
+    buffer.writeln('</html>');
+
+    return buffer.toString();
+  }
+
+  // Escape HTML special characters
+  String _htmlEscape(String text) {
+    return text
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;')
+        .replaceAll('\n', '<br>');
+  }
+
+  // Åbn TUI browser (denne funktion kan erstattes med UI-navigation)
+  Future<void> showTuiBrowser() async {
+    _lastError = 'TUI browser er integreret i appen - brug UI i stedet';
+    notifyListeners();
+  }
+
+  // Funktion til at kopiere chatfiler fra Cursor's mappe til Documents
+  Future<String> copyChatFilesToDocuments() async {
+    final buffer = StringBuffer();
+    final homeDir = Platform.environment['HOME'] ?? '';
+    final cursorWorkspace = path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage');
+    final documentsPath = path.join(homeDir, 'Documents', 'CursorChats');
+    
+    buffer.writeln('Forsøger at kopiere chatfiler fra:');
+    buffer.writeln(cursorWorkspace);
+    buffer.writeln('til:');
+    buffer.writeln(documentsPath);
+    buffer.writeln('');
+    
+    try {
+      // Tjek om kilde-mappen eksisterer
+      final cursorDir = Directory(cursorWorkspace);
+      if (!await cursorDir.exists()) {
+        buffer.writeln('FEJL: Cursor workspace mappe findes ikke!');
+        _debugInfo = buffer.toString();
+        notifyListeners();
+        return buffer.toString();
+      }
+      
+      // Opret mål-mappen hvis den ikke eksisterer
+      final docsDir = Directory(documentsPath);
+      if (!await docsDir.exists()) {
+        await docsDir.create(recursive: true);
+        buffer.writeln('Oprettede mål-mappe: $documentsPath');
+      }
+      
+      // List alle mapper i Cursor workspace
+      List<FileSystemEntity> cursorDirs = [];
+      try {
+        cursorDirs = await cursorDir.list().where((e) => e is Directory).toList();
+        buffer.writeln('Fandt ${cursorDirs.length} mapper i Cursor workspace.');
+      } catch (e) {
+        buffer.writeln('FEJL: Kunne ikke læse Cursor workspace: $e');
+        _debugInfo = buffer.toString();
+        notifyListeners();
+        return buffer.toString();
+      }
+      
+      if (cursorDirs.isEmpty) {
+        buffer.writeln('Ingen mapper fundet i Cursor workspace.');
+        _debugInfo = buffer.toString();
+        notifyListeners();
+        return buffer.toString();
+      }
+      
+      // Kopier hver mappe til Documents
+      int successCount = 0;
+      for (var dir in cursorDirs) {
+        final dirName = path.basename(dir.path);
+        final targetDir = path.join(documentsPath, dirName);
+        
+        try {
+          // Tjek om mål-mappen allerede eksisterer
+          final targetDirCheck = Directory(targetDir);
+          if (await targetDirCheck.exists()) {
+            buffer.writeln('Mappe $dirName eksisterer allerede i mål-mappen, springer over.');
+            continue;
+          }
+          
+          // Kopier mappe
+          await _copyDirectory(dir.path, targetDir);
+          successCount++;
+          buffer.writeln('✓ Kopierede mappe: $dirName');
+        } catch (e) {
+          buffer.writeln('✗ Fejl ved kopiering af $dirName: $e');
+        }
+      }
+      
+      buffer.writeln('');
+      buffer.writeln('Kopieringsresultat: $successCount af ${cursorDirs.length} mapper kopieret.');
+      
+      if (successCount > 0) {
+        // Opdater sti til den nye mappe
+        await _settings.updateWorkspacePath(documentsPath);
+        buffer.writeln('');
+        buffer.writeln('✓ Opdaterede workspace sti til: $documentsPath');
+        buffer.writeln('Du kan nu genindlæse chats fra den nye placering.');
+      }
+    } catch (e) {
+      buffer.writeln('Generel fejl under kopiering: $e');
+    }
+    
+    final result = buffer.toString();
+    _debugInfo = result;
+    notifyListeners();
+    return result;
+  }
+  
+  // Hjælpefunktion til at kopiere en mappe rekursivt
+  Future<void> _copyDirectory(String source, String destination) async {
+    final sourceDir = Directory(source);
+    final destDir = Directory(destination);
+    
+    if (!await destDir.exists()) {
+      await destDir.create(recursive: true);
+    }
+    
+    await for (final entity in sourceDir.list(recursive: false)) {
+      final newPath = path.join(destination, path.basename(entity.path));
+      
+      if (entity is File) {
+        await entity.copy(newPath);
+      } else if (entity is Directory) {
+        await _copyDirectory(entity.path, newPath);
+      }
+    }
   }
 }
