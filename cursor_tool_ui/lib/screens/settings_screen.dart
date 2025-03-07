@@ -6,9 +6,17 @@ import 'package:path/path.dart' as path;  // Korrekt import til path funktioner
 import '../services/settings_service.dart';
 import '../services/chat_service.dart';
 import '../services/database_service.dart';
+import '../services/vector_database_service.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _isProcessing = false;
 
   @override
   Widget build(BuildContext context) {
@@ -140,6 +148,69 @@ class SettingsScreen extends StatelessWidget {
             trailing: null,
             onTap: null,
           ),
+          SizedBox(height: 20),
+          
+          // Ryd database knap
+          ElevatedButton.icon(
+            onPressed: () async {
+              // Vis bekræftelsesdialog
+              final confirmation = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text('Ryd database'),
+                  content: Text(
+                    'Dette vil slette alle gemte chats og data fra databasen. '
+                    'Du skal importere chats igen bagefter.\n\n'
+                    'Er du sikker på at du vil fortsætte?'
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: Text('Annuller'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: Text('Ryd database'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+              
+              // Hvis bekræftet, ryd databasen
+              if (confirmation == true) {
+                final chatService = Provider.of<ChatService>(context, listen: false);
+                setState(() {
+                  _isProcessing = true;
+                });
+                
+                try {
+                  await chatService.clearDatabase();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Database ryddet. Importer dine chats igen.'))
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Fejl: $e'))
+                  );
+                } finally {
+                  setState(() {
+                    _isProcessing = false;
+                  });
+                }
+              }
+            },
+            icon: Icon(Icons.delete_forever),
+            label: Text('Ryd database og start forfra'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red[100],
+              foregroundColor: Colors.red[900],
+            ),
+          ),
+          
+          SizedBox(height: 20),
         ],
       ),
     );

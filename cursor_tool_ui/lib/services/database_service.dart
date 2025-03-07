@@ -561,4 +561,24 @@ class DatabaseService extends ChangeNotifier {
       );
     }).toList();
   }
+
+  /// Ryd alle chats fra databasen
+  Future<void> clearAllChats() async {
+    if (!isInitialized) {
+      throw Exception('Database er ikke initialiseret');
+    }
+    
+    try {
+      // Slet alle chats
+      await _db!.delete('chats');
+      print('Alle chats slettet fra databasen');
+      
+      // Slet alle beskedindeks hvis vi har en vector database
+      await _db!.delete('message_embeddings');
+      print('Alle beskedindeks slettet fra databasen');
+    } catch (e) {
+      print('Fejl ved sletning af chats: $e');
+      throw Exception('Fejl ved sletning af chats: $e');
+    }
+  }
 } 

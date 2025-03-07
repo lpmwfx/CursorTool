@@ -387,6 +387,22 @@ class VectorDatabaseService {
     final floatList = Float32List.view(blob.buffer);
     return floatList.toList();
   }
+
+  /// Ryd alle data fra vector databasen
+  Future<void> clearAllData() async {
+    if (!isInitialized) {
+      throw Exception('Vector database er ikke initialiseret');
+    }
+    
+    try {
+      // Slet alle vektorer
+      _db!.execute('DELETE FROM message_embeddings');
+      print('Alle vektorer slettet fra vector databasen');
+    } catch (e) {
+      print('Fejl ved sletning af vector data: $e');
+      throw Exception('Fejl ved sletning af vector data: $e');
+    }
+  }
 }
 
 /// Hjælpeklasse til at gemme search results med deres score
