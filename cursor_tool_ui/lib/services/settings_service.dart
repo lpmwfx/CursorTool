@@ -44,10 +44,10 @@ class SettingsService extends ChangeNotifier {
 
     // Liste over mulige stier at tjekke - prioriteret rækkefølge
     final pathsToCheck = [
-      '/home/lpm/.cursor/cursor_chat_tool', // Direkte sti vi ved der virker
+      path.join(homeDir, '.cursor', 'cli_chat_tool'),
       path.join(homeDir, '.cursor', 'cursor_chat_tool'),
-      path.join(homeDir, 'Repo på HDD', 'CursorTool', 'cursor_chat_cli',
-          'cursor_chat_tool'),
+      '/home/lpm/.cursor/cli_chat_tool', // Direkte sti vi ved der virker
+      '/home/lpm/.cursor/cursor_chat_tool', // Bagudkompatibilitet
     ];
 
     // Tjek hver sti
@@ -64,9 +64,9 @@ class SettingsService extends ChangeNotifier {
     }
 
     // Hvis vi ikke finder det, brug standardstien
-    print(
-        'Kunne ikke finde CLI-værktøjet, bruger standardsti: /home/lpm/.cursor/cursor_chat_tool');
-    return '/home/lpm/.cursor/cursor_chat_tool';
+    final defaultPath = path.join(homeDir, '.cursor', 'cli_chat_tool');
+    print('Kunne ikke finde CLI-værktøjet, bruger standardsti: $defaultPath');
+    return defaultPath;
   }
 
   // Find standardstien til workspace storage

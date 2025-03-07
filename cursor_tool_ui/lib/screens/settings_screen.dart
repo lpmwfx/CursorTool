@@ -588,11 +588,11 @@ class SettingsScreen extends StatelessWidget {
           // Check for OS specifikke versioner
           String assetPath;
           if (Platform.isMacOS) {
-            assetPath = 'assets/bin/cursor_chat_tool_macos';
+            assetPath = 'assets/bin/cli_chat_tool_macos';
           } else if (Platform.isLinux) {
-            assetPath = 'assets/bin/cursor_chat_tool_linux';
+            assetPath = 'assets/bin/cli_chat_tool_linux';
           } else {
-            assetPath = 'assets/bin/cursor_chat_tool';
+            assetPath = 'assets/bin/cli_chat_tool';
           }
           
           final byteData = await assetBundle.load(assetPath);
@@ -683,7 +683,7 @@ class SettingsScreen extends StatelessWidget {
       }
       
       // Definer målfilsti
-      final targetPath = path.join(targetDir, 'cursor_chat_tool');
+      final targetPath = path.join(targetDir, 'cli_chat_tool');
       
       // Kopier filen
       await File(cliPath).copy(targetPath);
