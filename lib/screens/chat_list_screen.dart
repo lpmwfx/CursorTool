@@ -203,9 +203,6 @@ class ChatListScreen extends StatelessWidget {
                         itemBuilder: (context, index) {
                           try {
                             final message = displayMessages[index];
-                            if (message == null) {
-                              return const Text('Fejl: Besked er null');
-                            }
                             
                             return Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8.0),

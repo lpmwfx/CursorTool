@@ -25,7 +25,7 @@ void main() async {
 }
 
 class CursorToolsApp extends StatelessWidget {
-  const CursorToolsApp({Key? key}) : super(key: key);
+  const CursorToolsApp({super.key});
 
   @override
   Widget build(BuildContext context) {

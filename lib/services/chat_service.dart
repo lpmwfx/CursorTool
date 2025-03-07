@@ -1,11 +1,18 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:isolate';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:process_run/process_run.dart' show run;
 import '../models/chat.dart';
+import '../cli/chat_browser.dart';
+import '../cli/chat_extractor.dart';
+import '../cli/chat_model.dart' as cli;
+import '../cli/config.dart';
 import 'settings_service.dart';
 
+// Opdateret version der bruger integreret CLI-kode
 class ChatService extends ChangeNotifier {
   final SettingsService _settings;
   List<Chat> _chats = [];
@@ -18,48 +25,55 @@ class ChatService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get lastError => _lastError;
 
-  // Hent alle chats via CLI-værktøjet
+  // Hent alle chats via integreret CLI-kode
   Future<void> loadChats() async {
     _isLoading = true;
     _lastError = '';
     notifyListeners();
 
     try {
-      final result = await _runCliCommand(
-          ['--list', '--format', 'json', '--output', _settings.outputPath]);
-
-      if (result.exitCode != 0) {
-        _lastError = 'Fejl ved indlæsning af chats: ${result.stderr}';
+      // Opret config med indstillinger
+      final config = Config(
+        dbPath: _settings.workspacePath,
+        outputPath: _settings.outputPath,
+        outputFormat: _settings.defaultFormat,
+      );
+      
+      // Brug ChatBrowser direkte
+      final browser = ChatBrowser(config);
+      final chatHistories = await browser.listChatHistories();
+      
+      if (chatHistories.isEmpty) {
+        _lastError = 'Ingen chats fundet i ${_settings.workspacePath}';
         _isLoading = false;
         notifyListeners();
         return;
       }
-
-      // Indlæs chats fra output-filen, hvis de blev udtrukket
-      final chatFolder = Directory(_settings.outputPath);
-      if (await chatFolder.exists()) {
-        final jsonFiles = await chatFolder
-            .list()
-            .where((entity) => entity is File && entity.path.endsWith('.json'))
-            .toList();
-
-        _chats = [];
-
-        for (final file in jsonFiles) {
-          try {
-            final content = await File(file.path).readAsString();
-            final chatData = json.decode(content);
-            _chats.add(Chat.fromJson(chatData));
-          } catch (e) {
-            print('Fejl ved indlæsning af chat-fil ${file.path}: $e');
-          }
-        }
-
-        // Sorter chats efter seneste besked
-        _chats.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
-      }
+      
+      // Konverter til vores Chat-model
+      _chats = chatHistories.map((history) {
+        final messages = history.messages.map((msg) => 
+          ChatMessage(
+            content: msg.content,
+            isUser: msg.role == 'user',
+            timestamp: DateTime.fromMillisecondsSinceEpoch(msg.timestamp),
+          )
+        ).toList();
+        
+        return Chat(
+          id: history.id,
+          title: history.title.length > 50 
+              ? '${history.title.substring(0, 47)}...' 
+              : history.title,
+          messages: messages,
+        );
+      }).toList();
+      
+      // Sorter efter seneste besked
+      _chats.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
+      
     } catch (e) {
-      _lastError = 'Fejl: $e';
+      _lastError = 'Fejl ved indlæsning af chats: $e';
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -67,73 +81,28 @@ class ChatService extends ChangeNotifier {
   }
 
   // Udtræk en specifik chat
-  Future<bool> extractChat(String chatId, String format) async {
-    _isLoading = true;
-    _lastError = '';
-    notifyListeners();
-
+  Future<bool> extractChat(String chatId, [String format = '']) async {
     try {
-      final result = await _runCliCommand([
-        '--extract',
-        chatId,
-        '--format',
-        format,
-        '--output',
-        _settings.outputPath
-      ]);
-
-      if (result.exitCode != 0) {
-        _lastError = 'Fejl ved udtrækning af chat: ${result.stderr}';
-        _isLoading = false;
-        notifyListeners();
-        return false;
-      }
-
+      final config = Config(
+        dbPath: _settings.workspacePath,
+        outputPath: _settings.outputPath,
+        outputFormat: format.isNotEmpty ? format : _settings.defaultFormat,
+      );
+      
+      final extractor = ChatExtractor(config);
+      await extractor.extractChat(chatId);
       return true;
     } catch (e) {
-      _lastError = 'Fejl: $e';
-      return false;
-    } finally {
-      _isLoading = false;
+      _lastError = 'Fejl ved udtrækning af chat: $e';
       notifyListeners();
+      return false;
     }
   }
 
-  // Vis TUI browseren
-  Future<bool> showTuiBrowser() async {
-    _isLoading = true;
-    _lastError = '';
+  // Åbn TUI browser (denne funktion kan fjernes eller erstattes)
+  Future<void> showTuiBrowser() async {
+    _lastError = 'TUI browser er ikke tilgængelig i den integrerede version';
     notifyListeners();
-
-    try {
-      print('Forsøger at starte TUI browseren: ${_settings.cliPath}');
-
-      // Tjek om CLI-værktøjet eksisterer
-      final cliFile = File(_settings.cliPath);
-      if (!cliFile.existsSync() && !_settings.cliPath.contains('/')) {
-        // Hvis stien ikke indeholder '/', så er det måske et program i PATH
-        print('CLI-værktøj ikke fundet som fil, men det kan være i PATH');
-      } else if (!cliFile.existsSync()) {
-        throw Exception('CLI-værktøj ikke fundet: ${_settings.cliPath}');
-      }
-
-      final result = await _runCliCommand([]);
-
-      if (result.exitCode != 0) {
-        throw Exception(
-            'CLI returnerede fejlkode ${result.exitCode}: ${result.stderr}');
-      }
-
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _lastError = 'Fejl ved start af TUI browser: $e';
-      print('TUI Browser fejl: $e');
-      _isLoading = false;
-      notifyListeners();
-      return false;
-    }
   }
 
   // Kør CLI-kommando

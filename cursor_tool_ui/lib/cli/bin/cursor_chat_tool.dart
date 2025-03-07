@@ -1,8 +1,9 @@
 import 'dart:io';
 import 'package:args/args.dart';
-import '../lib/chat_browser.dart';
-import '../lib/chat_extractor.dart';
-import '../lib/config.dart';
+import 'package:path/path.dart' as path;
+import 'package:cursor_tool_ui/cli/lib/chat_browser.dart';
+import 'package:cursor_tool_ui/cli/lib/chat_extractor.dart';
+import 'package:cursor_tool_ui/cli/lib/config.dart';
 
 void main(List<String> arguments) async {
   final parser = ArgParser()

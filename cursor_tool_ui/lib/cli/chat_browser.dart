@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:dart_console/dart_console.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as path;
@@ -265,7 +266,7 @@ class ChatBrowser {
   /// Hjælpefunktion til at formattere tekst
   String _padTruncate(String text, int width) {
     if (text.length > width) {
-      return text.substring(0, width - 3) + '...';
+      return '${text.substring(0, width - 3)}...';
     }
     return text.padRight(width);
   }
