@@ -182,6 +182,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _buildChatListItem(BuildContext context, Chat chat) {
+    // Tjek om det er en ID-baseret chat
+    final isIdBasedChat = chat.title.startsWith('Chat ') && 
+        chat.title.substring(5) == chat.id;
+    
     // Truncate long titles
     final displayTitle = chat.title.length > 60
         ? '${chat.title.substring(0, 57)}...'
@@ -190,13 +194,46 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: ListTile(
-        title: Text(displayTitle),
+        title: Row(
+          children: [
+            Expanded(child: Text(displayTitle)),
+            if (isIdBasedChat)
+              Tooltip(
+                message: 'Dette er en ID-baseret chat, som kan være sværere at åbne',
+                child: Icon(Icons.info_outline, size: 16, color: Colors.orange),
+              ),
+          ],
+        ),
         subtitle: Text('ID: ${chat.id} • ${chat.messages.length} beskeder'),
-        trailing: IconButton(
-          icon: const Icon(Icons.chevron_right),
-          onPressed: () {
-            _viewChatContent(context, chat);
-          },
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Udtræk chat',
+              onSelected: (format) => _extractChat(context, chat, format),
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'json',
+                  child: Text('Udtræk som JSON'),
+                ),
+                const PopupMenuItem(
+                  value: 'md',
+                  child: Text('Udtræk som Markdown'),
+                ),
+                const PopupMenuItem(
+                  value: 'html',
+                  child: Text('Udtræk som HTML'),
+                ),
+              ],
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () {
+                _viewChatContent(context, chat);
+              },
+            ),
+          ],
         ),
         onTap: () {
           _viewChatContent(context, chat);
@@ -205,14 +242,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  Future<void> _viewChatContent(BuildContext context, Chat chat) async {
-    print('=====================');
-    print('Starter _viewChatContent');
-    print('Chat ID: ${chat.id}');
-    print('Chat titel: ${chat.title}');
-    print('Antal beskeder: ${chat.messages.length}');
-    print('=====================');
-
+  Future<void> _extractChat(BuildContext context, Chat chat, String format) async {
     final chatService = Provider.of<ChatService>(context, listen: false);
     
     showDialog(
@@ -225,7 +255,93 @@ class _ChatListScreenState extends State<ChatListScreen> {
             children: [
               CircularProgressIndicator(),
               SizedBox(height: 16),
+              Text('Udtrækker chat...'),
+            ],
+          ),
+        );
+      },
+    );
+    
+    try {
+      final outputFile = await chatService.extractChat(chat.id, format);
+      
+      // Luk dialogen
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      if (outputFile != null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Chat udtrukket til: $outputFile'),
+              action: SnackBarAction(
+                label: 'OK',
+                onPressed: () {},
+              ),
+            ),
+          );
+        }
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Fejl ved udtrækning: ${chatService.lastError}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Luk dialogen
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fejl: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _viewChatContent(BuildContext context, Chat chat) async {
+    print('=====================');
+    print('Starter _viewChatContent');
+    print('Chat ID: ${chat.id}');
+    print('Chat titel: ${chat.title}');
+    print('Antal beskeder: ${chat.messages.length}');
+    
+    // Identificer ID-baseret chat
+    final isIdBasedChat = chat.title.startsWith('Chat ') && 
+        chat.title.substring(5) == chat.id;
+    print('ID-baseret chat: $isIdBasedChat');
+    print('=====================');
+
+    final chatService = Provider.of<ChatService>(context, listen: false);
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
               Text('Henter chat...'),
+              if (isIdBasedChat) 
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    'Dette er en ID-baseret chat, som kan tage længere tid.',
+                    style: TextStyle(fontSize: 12, color: Colors.orange),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
             ],
           ),
         );
@@ -239,6 +355,27 @@ class _ChatListScreenState extends State<ChatListScreen> {
       print('Henter fuld chat fra CLI værktøj');
       print('CLI sti: ${chatService.cliPath}');
       print('Workspace sti: ${chatService.workspacePath}');
+      
+      // For ID-baserede chats, prøv at få den direkte fra CLI
+      if (isIdBasedChat) {
+        print('Forsøger at hente ID-baseret chat direkte fra CLI');
+        final fullChat = await chatService.getFullChatFromCli(chat.id);
+        if (fullChat != null && fullChat.messages.length > 1) {
+          chatToDisplay = fullChat;
+          print('Hentet ID-baseret chat direkte fra CLI med ${chatToDisplay.messages.length} beskeder');
+          
+          // Luk loading dialog
+          if (context.mounted) {
+            Navigator.of(context).pop();
+          }
+          
+          // Vis chatten
+          if (context.mounted) {
+            _showChatDialog(context, chatToDisplay);
+          }
+          return;
+        }
+      }
       
       try {
         // Opret en output-mappe i workspace directoriet til at gemme JSON filen
@@ -254,32 +391,63 @@ class _ChatListScreenState extends State<ChatListScreen> {
         print('Stderr: ${result.stderr}');
         
         if (result.exitCode == 0) {
-          // Find filstien i outputtet
+          // Find filstien i outputtet eller generer den selv
+          String? jsonFilePath;
+          
+          // 1. Forsøg først at finde filsti direkte i output
           final output = result.stdout.toString();
           print('CLI output: $output');
           
-          // Forsøg at finde filstien i outputtet med regex
           final regex = RegExp(r'Chat udtrukket til: (.+\.json)');
           final match = regex.firstMatch(output);
           
-          String jsonFilePath;
           if (match != null) {
             jsonFilePath = match.group(1)!;
             print('Fandt JSON fil sti i output: $jsonFilePath');
           } else {
-            // Alternativt, gæt filstien baseret på ID
-            jsonFilePath = path.join(outputDir, 'Chat_${chat.id}_${chat.id}.json');
-            print('Kunne ikke finde filsti i output, gætter på: $jsonFilePath');
+            // 2. Søg i output-mappen efter filer der matcher chatID
+            final dir = Directory(outputDir);
+            if (await dir.exists()) {
+              await for (final entity in dir.list()) {
+                if (entity is File && 
+                    (entity.path.contains(chat.id) || 
+                     path.basename(entity.path).contains(chat.id))) {
+                  jsonFilePath = entity.path;
+                  print('Fandt JSON fil ved søgning: $jsonFilePath');
+                  break;
+                }
+              }
+            }
+            
+            // 3. Hvis stadig ikke fundet, prøv at generere forskellige mulige filnavne
+            if (jsonFilePath == null) {
+              final filePatterns = [
+                // Forskellige mønstre som CLI-værktøjet kan bruge
+                'Chat_${chat.id}.json',
+                'Chat_${chat.id}_${chat.id}.json',
+                '${chat.id}.json',
+                '${chat.title.replaceAll(' ', '_')}_${chat.id}.json',
+                'chat_${chat.id}.json',
+              ];
+              
+              for (final pattern in filePatterns) {
+                final testPath = path.join(outputDir, pattern);
+                if (await File(testPath).exists()) {
+                  jsonFilePath = testPath;
+                  print('Fandt JSON fil ved navnemønster: $jsonFilePath');
+                  break;
+                }
+              }
+            }
           }
           
-          // Kontroller om filen eksisterer
-          final jsonFile = File(jsonFilePath);
-          if (await jsonFile.exists()) {
-            print('JSON fil eksisterer: ${jsonFile.path}');
+          // Hvis vi har fundet en fil, prøv at læse den
+          if (jsonFilePath != null && await File(jsonFilePath).exists()) {
+            print('JSON fil eksisterer: $jsonFilePath');
             
             try {
               // Læs JSON fra filen
-              final jsonStr = await jsonFile.readAsString();
+              final jsonStr = await File(jsonFilePath).readAsString();
               print('Læste ${jsonStr.length} tegn fra JSON filen');
               
               try {
@@ -313,59 +481,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               print('Fejl ved læsning af JSON fil: $e');
             }
           } else {
-            print('JSON fil blev ikke fundet: $jsonFilePath');
-            
-            // Prøv at liste filer i output-mappen for at finde den
-            try {
-              final dir = Directory(outputDir);
-              if (await dir.exists()) {
-                print('Indhold af output-mappen:');
-                await for (final entity in dir.list()) {
-                  print('- ${entity.path}');
-                  if (entity is File && entity.path.contains(chat.id)) {
-                    // Fandt en fil, der matcher chat ID'et
-                    print('Matcher fil fundet: ${entity.path}');
-                    
-                    try {
-                      // Læs JSON fra den matchende fil
-                      final jsonStr = await entity.readAsString();
-                      print('Læste ${jsonStr.length} tegn fra JSON filen');
-                      
-                      try {
-                        // Parse JSON
-                        final jsonData = jsonDecode(jsonStr);
-                        print('JSON data decoded - keys: ${jsonData.keys.join(', ')}');
-                        
-                        // Opret chat model
-                        final fullChat = Chat.fromJson(jsonData);
-                        print('Chat objekt oprettet med ${fullChat.messages.length} beskeder');
-                        
-                        if (fullChat.messages.isNotEmpty) {
-                          // Opdater chatten vi vil vise
-                          chatToDisplay = fullChat;
-                          print('Chatten opdateret til visning med ${chatToDisplay.messages.length} beskeder');
-                          
-                          // Gem til database hvis tilgængelig
-                          try {
-                            await chatService.saveChatToDatabase(fullChat);
-                            print('Chat gemt til database');
-                          } catch (e) {
-                            print('Kunne ikke gemme chat til databasen: $e');
-                          }
-                          break; // Forlad løkken når vi har fundet og indlæst en gyldig fil
-                        }
-                      } catch (e) {
-                        print('Fejl ved parsing af JSON: $e');
-                      }
-                    } catch (e) {
-                      print('Fejl ved læsning af JSON fil: $e');
-                    }
-                  }
-                }
-              }
-            } catch (e) {
-              print('Fejl ved læsning af output-mappen: $e');
-            }
+            print('Kunne ikke finde nogen JSON fil for chat ID: ${chat.id}');
           }
         } else {
           print('CLI kommando fejlede med kode: ${result.exitCode}');
@@ -378,10 +494,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
       }
       
       // Luk loading dialog
-      Navigator.of(context).pop();
-      
-      // Vis chatten i en ny dialog
       if (context.mounted) {
+        Navigator.of(context).pop();
+      
+        // Vis chatten i en ny dialog
         if (chatToDisplay.messages.isEmpty || 
             (chatToDisplay.messages.length == 1 && 
              chatToDisplay.messages[0].content?.contains('Denne chat viser kun oversigten') == true)) {
@@ -397,53 +513,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           return;
         }
         
-        print('Viser dialog med ${chatToDisplay.messages.length} beskeder');
-        showDialog(
-          context: context,
-          builder: (BuildContext context) {
-            return Dialog(
-              child: Container(
-                width: MediaQuery.of(context).size.width * 0.9,
-                height: MediaQuery.of(context).size.height * 0.8,
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            chatToDisplay.title,
-                            style: Theme.of(context).textTheme.titleLarge,
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () {
-                            Navigator.of(context).pop();
-                          },
-                        ),
-                      ],
-                    ),
-                    const Divider(),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: chatToDisplay.messages.length,
-                        itemBuilder: (context, index) {
-                          final message = chatToDisplay.messages[index];
-                          return _buildMessageBubble(context, message);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+        _showChatDialog(context, chatToDisplay);
       }
     } catch (e) {
       print('Overordnet fejl ved visning af chat: $e');
@@ -457,6 +527,57 @@ class _ChatListScreenState extends State<ChatListScreen> {
         );
       }
     }
+  }
+  
+  // Hjælpefunktion til at vise chat i en dialog
+  void _showChatDialog(BuildContext context, Chat chat) {
+    print('Viser dialog med ${chat.messages.length} beskeder');
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          child: Container(
+            width: MediaQuery.of(context).size.width * 0.9,
+            height: MediaQuery.of(context).size.height * 0.8,
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        chat.title,
+                        style: Theme.of(context).textTheme.titleLarge,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                  ],
+                ),
+                const Divider(),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: chat.messages.length,
+                    itemBuilder: (context, index) {
+                      final message = chat.messages[index];
+                      return _buildMessageBubble(context, message);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildMessageBubble(BuildContext context, ChatMessage message) {

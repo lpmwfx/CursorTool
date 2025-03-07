@@ -4,14 +4,14 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
 import '../models/chat.dart';
 
 class DatabaseService extends ChangeNotifier {
   static const String dbName = 'cursor_chats.db';
   static const int dbVersion = 1;
   
-  Database? _db;
+  sqflite.Database? _db;
   bool _isInitialized = false;
   bool _isImporting = false;
   String _lastError = '';
@@ -27,35 +27,33 @@ class DatabaseService extends ChangeNotifier {
     if (_isInitialized) return;
     
     try {
-      final dbPath = await _getDbPath();
+      final dbPath = await _getDatabasePath();
       
       // Åbn eller opret databasen
-      _db = await openDatabase(
+      _db = await sqflite.openDatabase(
         dbPath,
         version: dbVersion,
-        onCreate: _onCreate,
+        onCreate: _createDatabase,
         onUpgrade: _onUpgrade,
       );
       
       _isInitialized = true;
+      print('Database initialiseret');
       notifyListeners();
     } catch (e) {
       _lastError = 'Kunne ikke initialisere database: $e';
-      print('Database fejl: $_lastError');
+      print('Fejl ved initialisering af database: $_lastError');
     }
   }
   
   /// Opret databasetabeller ved første kørsel
-  Future<void> _onCreate(Database db, int version) async {
+  Future<void> _createDatabase(sqflite.Database db, int version) async {
     // Chats tabel
     await db.execute('''
       CREATE TABLE chats(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cursor_id TEXT UNIQUE,
+        id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
-        last_message_time INTEGER NOT NULL,
-        is_favorite INTEGER DEFAULT 0,
-        metadata TEXT
+        last_message_time INTEGER NOT NULL
       )
     ''');
     
@@ -63,12 +61,11 @@ class DatabaseService extends ChangeNotifier {
     await db.execute('''
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER NOT NULL,
-        content TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        content TEXT,
         is_user INTEGER NOT NULL,
         timestamp INTEGER NOT NULL,
-        summary TEXT,
-        FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+        FOREIGN KEY (chat_id) REFERENCES chats(id)
       )
     ''');
     
@@ -99,67 +96,72 @@ class DatabaseService extends ChangeNotifier {
   }
   
   /// Opgrader databasen hvis skemaet ændres
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  Future<void> _onUpgrade(sqflite.Database db, int oldVersion, int newVersion) async {
     // Håndter fremtidige skemaopgraderinger her
     if (oldVersion < 2) {
       // Tilføj nye tabeller/kolonner for version 2
     }
   }
   
-  /// Hent alle chats fra databasen
+  /// Henter alle chats fra databasen
   Future<List<Chat>> getAllChats() async {
-    if (!_isInitialized || _db == null) {
-      await init();
-    }
-    
-    final List<Chat> result = [];
+    if (!_isInitialized) return [];
     
     try {
-      // Hent alle chats sorteret efter seneste besked først
-      final chatsData = await _db!.query(
-        'chats',
-        orderBy: 'last_message_time DESC',
-      );
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query('chats', orderBy: 'last_message_time DESC');
       
-      // Konverter hver række til en Chat model
-      for (final chatData in chatsData) {
-        final chatId = chatData['id'] as int;
+      final List<Chat> chats = [];
+      
+      for (var chatMap in maps) {
+        // Hent beskederne for denne chat
+        final messages = await _getMessagesForChat(chatMap['id'] as String);
         
-        // Hent beskeder for denne chat
-        final messagesData = await _db!.query(
-          'messages',
-          where: 'chat_id = ?',
-          whereArgs: [chatId],
-          orderBy: 'timestamp ASC',
-        );
-        
-        // Konverter beskeder til ChatMessage objekter
-        final messages = messagesData.map((msgData) {
-          return ChatMessage(
-            content: msgData['content'] as String,
-            isUser: (msgData['is_user'] as int) == 1,
-            timestamp: DateTime.fromMillisecondsSinceEpoch(msgData['timestamp'] as int),
-          );
-        }).toList();
-        
-        // Opret Chat objekt
-        final chat = Chat(
-          id: chatData['cursor_id'] as String,
-          title: chatData['title'] as String,
+        chats.add(Chat(
+          id: chatMap['id'] as String,
+          title: chatMap['title'] as String,
           messages: messages,
-        );
-        
-        result.add(chat);
+        ));
       }
+      
+      return chats;
     } catch (e) {
-      _lastError = 'Kunne ikke hente chats: $e';
-      print('Fejl ved hentning af chats: $_lastError');
+      print('Fejl ved hentning af chats fra databasen: $e');
+      return [];
     }
-    
-    return result;
   }
   
-  /// Gem en enkelt chat i databasen
+  /// Henter en specifik chat fra databasen
+  Future<Chat?> getChat(String chatId) async {
+    if (!_isInitialized) return null;
+    
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'chats',
+        where: 'id = ?',
+        whereArgs: [chatId],
+      );
+      
+      if (maps.isEmpty) {
+        return null;
+      }
+      
+      // Hent beskederne for denne chat
+      final messages = await _getMessagesForChat(chatId);
+      
+      return Chat(
+        id: maps.first['id'] as String,
+        title: maps.first['title'] as String,
+        messages: messages,
+      );
+    } catch (e) {
+      print('Fejl ved hentning af chat $chatId fra databasen: $e');
+      return null;
+    }
+  }
+  
+  /// Gemmer en chat til databasen
   Future<bool> saveChat(Chat chat) async {
     if (!_isInitialized || _db == null) {
       await init();
@@ -169,16 +171,15 @@ class DatabaseService extends ChangeNotifier {
       // Start en transaktion
       return await _db!.transaction((txn) async {
         // Indsæt eller opdatér chat
-        final chatId = await txn.rawInsert(
+        await txn.rawInsert(
           '''INSERT OR REPLACE INTO chats(
-               cursor_id, title, last_message_time, is_favorite
-             ) VALUES(?, ?, ?, ?)
+               id, title, last_message_time
+             ) VALUES(?, ?, ?)
           ''',
           [
             chat.id,
             chat.title,
             chat.lastMessageTime.millisecondsSinceEpoch,
-            0, // ikke favorit som standard
           ],
         );
         
@@ -186,7 +187,7 @@ class DatabaseService extends ChangeNotifier {
         await txn.delete(
           'messages',
           where: 'chat_id = ?',
-          whereArgs: [chatId],
+          whereArgs: [chat.id],
         );
         
         // Indsæt alle beskeder
@@ -194,11 +195,10 @@ class DatabaseService extends ChangeNotifier {
           await txn.insert(
             'messages',
             {
-              'chat_id': chatId,
+              'chat_id': chat.id,
               'content': message.content ?? '',
               'is_user': message.isUser ? 1 : 0,
               'timestamp': message.timestamp.millisecondsSinceEpoch,
-              'summary': null, // kan udfyldes senere hvis vi implementerer opsummering
             },
           );
         }
@@ -323,7 +323,7 @@ class DatabaseService extends ChangeNotifier {
       for (final dbFile in dbFiles) {
         try {
           // Åbn Cursor's database i læse-kun tilstand
-          final cursorDb = await openDatabase(
+          final cursorDb = await sqflite.openDatabase(
             dbFile.path, 
             readOnly: true,
           );
@@ -520,7 +520,7 @@ class DatabaseService extends ChangeNotifier {
   }
   
   /// Hent stien til databasefilen
-  Future<String> _getDbPath() async {
+  Future<String> _getDatabasePath() async {
     // Gem databasen i Documents-mappen, som er tilgængelig inden for sandbox
     final documentsDir = await getApplicationDocumentsDirectory();
     return path.join(documentsDir.path, dbName);
@@ -533,5 +533,32 @@ class DatabaseService extends ChangeNotifier {
       _db = null;
       _isInitialized = false;
     }
+  }
+
+  /// Giver adgang til databasen
+  Future<sqflite.Database> get database async {
+    if (_db == null || !_isInitialized) {
+      await init();
+    }
+    return _db!;
+  }
+
+  /// Henter alle beskederne for en specifik chat
+  Future<List<ChatMessage>> _getMessagesForChat(String chatId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'messages',
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+      orderBy: 'timestamp ASC',
+    );
+    
+    return maps.map((map) {
+      return ChatMessage(
+        content: map['content'] as String?,
+        isUser: map['is_user'] == 1,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
+      );
+    }).toList();
   }
 } 

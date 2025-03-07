@@ -34,19 +34,25 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.2
-  provider: ^6.1.1
+  provider: ^6.0.5
   path: ^1.8.3
   sqlite3: ^2.3.0
-  sqflite: ^2.3.0
-  path_provider: ^2.1.2
-  shared_preferences: ^2.2.2
+  sqflite: ^2.2.0+3
+  path_provider: ^2.0.15
+  shared_preferences: ^2.1.1
   intl: ^0.18.1  # Nedgraderet for kompatibilitet med dart_console
-  file_picker: ^6.1.1
-  collection: ^1.18.0
+  file_picker: ^5.3.0
+  collection: ^1.17.0
   dart_console: ^1.2.0  # CLI-komponent
   vector_math: ^2.1.4
-  flutter_markdown: ^0.6.18  # Til visning af markdown
-  process_run: ^0.14.1  # Til at køre eksterne processer
+  flutter_markdown: ^0.6.14
+  process_run: ^0.13.0
+  # Vector embeddings og søgning - alternative pakker der faktisk findes
+  sqlite3_flutter_libs: ^0.5.18
+  isar_flutter_libs: ^3.1.0+1  # Vektor database
+  ml_linalg: ^13.12.6  # For vector math operationer
+  http: ^1.1.0  # For API kald til OpenAI
+  isar: ^3.1.0+1
 
 dev_dependencies:
   flutter_test:
@@ -58,6 +64,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^3.0.0
+  build_runner: ^2.4.13
+  isar_generator: ^3.1.0+1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

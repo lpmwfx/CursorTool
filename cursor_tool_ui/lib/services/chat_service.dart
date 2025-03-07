@@ -9,23 +9,27 @@ import '../cli/chat_extractor.dart';
 import '../cli/config.dart';
 import 'settings_service.dart';
 import 'database_service.dart';
+import 'vector_database_service.dart';
 import 'package:process_run/process_run.dart';
 
 // Integreret version der bruger både CLI-kode, extern proces og lokal database
 class ChatService extends ChangeNotifier {
   final SettingsService _settings;
   final DatabaseService? _dbService; // Optional for backward compatibility
+  final VectorDatabaseService? _vectorDb; // Vector database service
   List<Chat> _chats = [];
   bool _isLoading = false;
   String _lastError = '';
   String _debugInfo = '';
+  List<SearchResult> _searchResults = [];
 
-  ChatService(this._settings, [this._dbService]);
+  ChatService(this._settings, [this._dbService, this._vectorDb]);
 
   List<Chat> get chats => _chats;
   bool get isLoading => _isLoading;
   String get lastError => _lastError;
   String get debugInfo => _debugInfo;
+  List<SearchResult> get searchResults => _searchResults;
   
   // Tilføj getters til settings-værdier for debugging
   String get cliPath => _settings.cliPath;
@@ -125,6 +129,11 @@ class ChatService extends ChangeNotifier {
     }
   }
   
+  // Offentlig metode til at hente en fuld chat via CLI (wrapper for den private metode)
+  Future<Chat?> getFullChatFromCli(String chatId) async {
+    return await _getFullChatFromCli(chatId);
+  }
+  
   // Parse output fra CLI værktøjet
   void _parseCliOutput(String output) {
     try {
@@ -159,18 +168,26 @@ class ChatService extends ChangeNotifier {
           if (parts.length >= 4) {
             final id = parts[0].trim();
             
-            // Hvis titlen er tom, brug første 10 tegn af ID som titel
+            // Hvis titlen er tom eller er lig med ID'et, generer en beskrivende titel
             String title = parts[1].trim();
+            bool isIdBasedChat = false;
+            
             if (title.isEmpty || title == id) {
-              // Forsøg at lave en mere beskrivende titel fra første besked
-              title = 'Chat $id';
+              isIdBasedChat = true;
+              // Generer en mere beskrivende titel baseret på dato eller andet
+              final dato = parts[2].trim();
+              if (dato.isNotEmpty) {
+                title = 'Chat fra $dato'; // Brug datoen i titlen
+              } else {
+                title = 'Chat $id'; // Fallback til ID
+              }
             }
             
             final dato = parts[2].trim();
             final antalStr = parts[3].trim();
             final antal = int.tryParse(antalStr) ?? 0;
             
-            print('Parsede chat: ID=$id, Titel=$title, Dato=$dato, Antal=$antal');
+            print('Parsede chat: ID=$id, Titel=$title, Dato=$dato, Antal=$antal, ID-baseret=${isIdBasedChat}');
             
             // Opret en liste af beskeder
             final messages = <ChatMessage>[];
@@ -190,6 +207,13 @@ class ChatService extends ChangeNotifier {
               title: title,
               messages: messages,
             );
+            
+            // Tilføj metainformation om chat
+            if (isIdBasedChat) {
+              (chat as dynamic).idBasedTitle = true;
+              (chat as dynamic).originalDate = dato;
+              (chat as dynamic).messageCount = antal;
+            }
             
             _chats.add(chat);
           }
@@ -300,42 +324,71 @@ class ChatService extends ChangeNotifier {
     }
   }
 
-  // Udtræk en specifik chat
-  Future<bool> extractChat(String chatId, String format) async {
+  // Gem chat til databasen
+  Future<bool> saveChatToDatabase(Chat chat) async {
+    if (_dbService == null || !_dbService!.isInitialized) {
+      return false;
+    }
+    
+    try {
+      await _dbService!.saveChat(chat);
+      print('Gemt chat ${chat.id} til databasen');
+      return true;
+    } catch (e) {
+      print('Fejl ved gemning af chat ${chat.id} til databasen: $e');
+      return false;
+    }
+  }
+  
+  /// Udtrækker chat til fil i det valgte format
+  Future<String?> extractChat(String chatId, String format) async {
     _isLoading = true;
     _lastError = '';
     notifyListeners();
     
     try {
-      // Opret config
-      final config = Config(
-        workspaceStoragePath: _settings.workspacePath,
-      );
+      // Først find chatten
+      Chat? chat;
       
-      // Hent chat med ChatBrowser
-      final browser = ChatBrowser(config);
-      final chat = await browser.getChat(chatId);
+      // Prøv først database
+      if (_dbService != null && _dbService!.isInitialized) {
+        chat = await _dbService!.getChat(chatId);
+      }
+      
+      // Hvis ikke fundet, prøv CLI
+      if (chat == null) {
+        chat = await _getFullChatFromCli(chatId);
+      }
       
       if (chat == null) {
         _lastError = 'Chat med ID $chatId blev ikke fundet';
-        return false;
+        return null;
       }
       
       // Opret output-mappen hvis den ikke findes
       final outputDir = Directory(_settings.outputPath);
-      if (!outputDir.existsSync()) {
-        outputDir.createSync(recursive: true);
+      if (!await outputDir.exists()) {
+        await outputDir.create(recursive: true);
       }
       
-      // Generer filnavn baseret på format
-      final fileName = '${chat.id}.$format';
-      final outputFile = path.join(_settings.outputPath, fileName);
+      // Generer et konsistent filnavn
+      final fileNameBase = chat.title.isEmpty || chat.title == 'Chat $chatId' || chat.title == chatId
+        ? 'Chat_${chatId}'
+        : '${_sanitizeFilename(chat.title)}_${chatId}';
+        
+      final fileName = '$fileNameBase.$format';
+      final outputFile = path.join(outputDir.path, fileName);
       
-      // Gem chat i det ønskede format
+      // For diagnostik
+      print('Gemmer chat med ID "$chatId" til fil: $outputFile');
+      print('Chat titel: "${chat.title}"');
+      print('Filnavn: $fileName');
+      
+      // Generer indhold i det ønskede format
       String content;
       switch (format.toLowerCase()) {
         case 'json':
-          content = jsonEncode(chat.toJson());
+          content = jsonEncode(chat);
           break;
         case 'markdown':
         case 'md':
@@ -351,12 +404,14 @@ class ChatService extends ChangeNotifier {
       }
       
       // Skriv til fil
-      File(outputFile).writeAsStringSync(content);
+      await File(outputFile).writeAsString(content);
       
-      return true;
+      print('Chat udtrukket til: $outputFile');
+      return outputFile;
     } catch (e) {
       _lastError = 'Fejl ved udtrækning af chat: $e';
-      return false;
+      print(_lastError);
+      return null;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -364,7 +419,7 @@ class ChatService extends ChangeNotifier {
   }
   
   // Formater chat som tekst
-  String _formatAsText(dynamic chat) {
+  String _formatAsText(Chat chat) {
     final buffer = StringBuffer();
     buffer.writeln('Chat: ${chat.title}');
     buffer.writeln('ID: ${chat.id}');
@@ -373,7 +428,7 @@ class ChatService extends ChangeNotifier {
     for (final message in chat.messages) {
       final timestamp = message.timestamp;
       buffer.writeln('${message.isUser ? "USER" : "ASSISTANT"} (${timestamp.toString()}):');
-      buffer.writeln(message.content);
+      buffer.writeln(message.content ?? '');
       buffer.writeln('');
     }
 
@@ -381,7 +436,7 @@ class ChatService extends ChangeNotifier {
   }
 
   // Formater chat som markdown
-  String _formatAsMarkdown(dynamic chat) {
+  String _formatAsMarkdown(Chat chat) {
     final buffer = StringBuffer();
     buffer.writeln('# ${chat.title}');
     buffer.writeln('');
@@ -392,7 +447,7 @@ class ChatService extends ChangeNotifier {
       final timestamp = message.timestamp;
       buffer.writeln('## ${message.isUser ? "USER" : "ASSISTANT"} - ${timestamp.toString()}');
       buffer.writeln('');
-      buffer.writeln(message.content);
+      buffer.writeln(message.content ?? '');
       buffer.writeln('');
       buffer.writeln('---');
       buffer.writeln('');
@@ -402,14 +457,14 @@ class ChatService extends ChangeNotifier {
   }
 
   // Formater chat som HTML
-  String _formatAsHtml(dynamic chat) {
+  String _formatAsHtml(Chat chat) {
     final buffer = StringBuffer();
     buffer.writeln('<!DOCTYPE html>');
     buffer.writeln('<html>');
     buffer.writeln('<head>');
     buffer.writeln('  <meta charset="UTF-8">');
     buffer.writeln('  <meta name="viewport" content="width=device-width, initial-scale=1.0">');
-    buffer.writeln('  <title>${chat.title}</title>');
+    buffer.writeln('  <title>${_htmlEscape(chat.title)}</title>');
     buffer.writeln('  <style>');
     buffer.writeln('    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }');
     buffer.writeln('    .message { margin-bottom: 20px; padding: 10px; border-radius: 5px; }');
@@ -419,7 +474,7 @@ class ChatService extends ChangeNotifier {
     buffer.writeln('  </style>');
     buffer.writeln('</head>');
     buffer.writeln('<body>');
-    buffer.writeln('  <h1>${chat.title}</h1>');
+    buffer.writeln('  <h1>${_htmlEscape(chat.title)}</h1>');
     buffer.writeln('  <p><em>Chat ID: ${chat.id}</em></p>');
 
     for (final message in chat.messages) {
@@ -427,7 +482,7 @@ class ChatService extends ChangeNotifier {
       final isUser = message.isUser;
       buffer.writeln('  <div class="message ${isUser ? 'user' : 'assistant'}">');
       buffer.writeln('    <div class="timestamp">${isUser ? "USER" : "ASSISTANT"} - ${timestamp.toString()}</div>');
-      buffer.writeln('    <div class="content">${_htmlEscape(message.content)}</div>');
+      buffer.writeln('    <div class="content">${_htmlEscape(message.content ?? '')}</div>');
       buffer.writeln('  </div>');
     }
 
@@ -446,6 +501,13 @@ class ChatService extends ChangeNotifier {
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;')
         .replaceAll('\n', '<br>');
+  }
+  
+  // Sanitize filename
+  String _sanitizeFilename(String filename) {
+    return filename
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
   }
 
   // Åbn TUI browser (denne funktion kan erstattes med UI-navigation)
@@ -795,19 +857,314 @@ class ChatService extends ChangeNotifier {
     return result;
   }
 
-  // Gem chat til databasen
-  Future<bool> saveChatToDatabase(Chat chat) async {
-    if (_dbService == null || !_dbService!.isInitialized) {
-      return false;
-    }
+  // Udfør semantisk søgning i chats
+  Future<List<SearchResult>> semanticSearch(String query) async {
+    _isLoading = true;
+    _lastError = '';
+    notifyListeners();
     
     try {
-      await _dbService!.saveChat(chat);
-      print('Gemt chat ${chat.id} til databasen');
-      return true;
+      if (_vectorDb != null && _vectorDb!.isInitialized) {
+        print('Udfører semantisk søgning: "$query"');
+        final results = await _vectorDb!.semanticSearch(query);
+        
+        _searchResults = results;
+        print('Fandt ${results.length} resultater');
+        return results;
+      } else {
+        _lastError = 'Vector database er ikke tilgængelig for søgning';
+        print(_lastError);
+        return [];
+      }
     } catch (e) {
-      print('Fejl ved gemning af chat ${chat.id} til databasen: $e');
-      return false;
+      _lastError = 'Fejl ved semantisk søgning: $e';
+      print(_lastError);
+      return [];
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
+  }
+  
+  // Import alle chats til vector database
+  Future<int> importToVectorDb() async {
+    _isLoading = true;
+    _lastError = '';
+    notifyListeners();
+    
+    try {
+      if (_vectorDb == null || !_vectorDb!.isInitialized) {
+        _lastError = 'Vector database er ikke initialiseret';
+        return 0;
+      }
+      
+      // Først sørg for, at vi har alle chats indlæst
+      if (_chats.isEmpty) {
+        await loadChats();
+      }
+      
+      int importCount = 0;
+      
+      // For hver chat, importér til vector database
+      for (final chat in _chats) {
+        try {
+          // Hvis det er et overfladisk chat objekt, hent den fulde chat først
+          Chat fullChat;
+          
+          if (chat.messages.length <= 1) {
+            print('Henter fuld chat ${chat.id} til vector import');
+            
+            if (_dbService != null && _dbService!.isInitialized) {
+              // Prøv fra database først
+              final dbChat = await _dbService!.getChat(chat.id);
+              if (dbChat != null && dbChat.messages.length > 1) {
+                fullChat = dbChat;
+              } else {
+                // Ellers prøv CLI
+                fullChat = await _getFullChatFromCli(chat.id) ?? chat;
+              }
+            } else {
+              // Ingen database, brug CLI
+              fullChat = await _getFullChatFromCli(chat.id) ?? chat;
+            }
+          } else {
+            fullChat = chat;
+          }
+          
+          // Gem chatten i vector databasen
+          if (fullChat.messages.length > 1) {
+            await _vectorDb!.saveChat(fullChat);
+            importCount++;
+            print('Importerede chat ${fullChat.id} til vector database (${fullChat.messages.length} beskeder)');
+          } else {
+            print('Sprang chat ${fullChat.id} over - ingen beskeder at importere');
+          }
+        } catch (e) {
+          print('Fejl ved import af chat ${chat.id} til vector database: $e');
+        }
+      }
+      
+      print('Vector database import fuldført: $importCount chats importeret');
+      return importCount;
+    } catch (e) {
+      _lastError = 'Fejl ved import til vector database: $e';
+      print(_lastError);
+      return 0;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // Hent fuld chat fra CLI værktøj
+  Future<Chat?> _getFullChatFromCli(String chatId) async {
+    try {
+      print('\n===== Forsøger at hente chat med ID: $chatId =====');
+      
+      // Opret en output-mappe
+      final outputDir = path.join(_settings.workspacePath, 'output');
+      Directory(outputDir).createSync(recursive: true);
+      print('Output mappe: $outputDir');
+      
+      // For chats med numeriske ID'er, lad os være særligt omhyggelige
+      final isNumericId = int.tryParse(chatId) != null;
+      print('Numerisk ID: $isNumericId');
+      
+      // Hent chatten via CLI
+      print('Kører CLI kommando: --extract $chatId --format json --output $outputDir');
+      final result = await runCliTool(['--extract', chatId, '--format', 'json', '--output', outputDir]);
+      
+      print('CLI returnerede kode: ${result.exitCode}');
+      print('CLI stderr: ${result.stderr}');
+      
+      if (result.exitCode == 0) {
+        // Find filsti i output
+        final output = result.stdout.toString();
+        print('CLI stdout længde: ${output.length}');
+        String? jsonFilePath;
+        
+        // 1. Prøv først at finde filsti direkte via regex
+        final regex = RegExp(r'Chat udtrukket til: (.+\.json)');
+        final match = regex.firstMatch(output);
+        
+        if (match != null) {
+          jsonFilePath = match.group(1)!;
+          print('1. Fandt JSON fil via regex: $jsonFilePath');
+        } else {
+          // 2. Søg i output-mappen efter filer, der matcher chatId
+          print('2. Søger i output-mappen efter filer der matcher ID: $chatId');
+          final dir = Directory(outputDir);
+          if (await dir.exists()) {
+            // List alle filer i mappen for debugging
+            final files = await dir.list().toList();
+            print('Filer i output-mappen:');
+            for (var file in files) {
+              print('- ${file.path}');
+            }
+            
+            // Søg efter filer der matcher chatId
+            for (var entity in files) {
+              if (entity is File && 
+                  (entity.path.contains(chatId) || 
+                   path.basename(entity.path).contains(chatId))) {
+                jsonFilePath = entity.path;
+                print('2. Fandt JSON fil via mappegennemsøgning: $jsonFilePath');
+                break;
+              }
+            }
+          }
+          
+          // 3. Prøv forskellige navnekonventioner som CLI-værktøjet kunne bruge
+          if (jsonFilePath == null) {
+            print('3. Prøver forskellige filnavnsmønstre');
+            final filePatterns = [
+              // Forskellige mønstre som CLI-værktøjet kan bruge
+              'Chat_${chatId}.json',
+              'Chat_${chatId}_${chatId}.json',
+              '${chatId}.json',
+              'chat_${chatId}.json',
+            ];
+            
+            // For numeriske ID'er, tilføj nogle yderligere mønstre
+            if (isNumericId) {
+              filePatterns.addAll([
+                'Chat_$chatId.json',
+                '$chatId.json',
+                'output_$chatId.json',
+                'chat_$chatId.json',
+                'cursor_chat_$chatId.json',
+              ]);
+            }
+            
+            for (final pattern in filePatterns) {
+              final testPath = path.join(outputDir, pattern);
+              print('Tester filsti: $testPath');
+              if (await File(testPath).exists()) {
+                jsonFilePath = testPath;
+                print('3. Fandt JSON-fil via navnemønster: $jsonFilePath');
+                break;
+              }
+            }
+          }
+          
+          // 4. Som sidste udvej, tag den nyeste json-fil i mappen
+          if (jsonFilePath == null) {
+            print('4. Søger efter nyeste JSON-fil i mappen');
+            final dir = Directory(outputDir);
+            if (await dir.exists()) {
+              File? newestFile;
+              DateTime newestTime = DateTime(1970);
+              
+              await for (final entity in dir.list()) {
+                if (entity is File && entity.path.endsWith('.json')) {
+                  final stat = await entity.stat();
+                  if (stat.modified.isAfter(newestTime)) {
+                    newestTime = stat.modified;
+                    newestFile = entity;
+                  }
+                }
+              }
+              
+              if (newestFile != null) {
+                jsonFilePath = newestFile.path;
+                print('4. Bruger nyeste JSON-fil: $jsonFilePath (${newestTime.toString()})');
+              }
+            }
+          }
+        }
+        
+        // Hvis en fil blev fundet, læs og parsér den
+        if (jsonFilePath != null && await File(jsonFilePath).exists()) {
+          try {
+            final jsonFile = File(jsonFilePath);
+            final fileSize = await jsonFile.length();
+            print('Fundet JSON-fil: $jsonFilePath (størrelse: $fileSize bytes)');
+            
+            if (fileSize == 0) {
+              print('FEJL: JSON-filen er tom!');
+              return null;
+            }
+            
+            final jsonStr = await jsonFile.readAsString();
+            print('Læste ${jsonStr.length} tegn fra JSON-filen');
+            
+            if (jsonStr.isEmpty) {
+              print('FEJL: JSON-strengen er tom!');
+              return null;
+            }
+            
+            try {
+              final jsonData = jsonDecode(jsonStr);
+              print('JSON dekodet successfuldt');
+              print('JSON indeholder følgende nøgler: ${jsonData is Map ? jsonData.keys.join(', ') : 'Ikke et Map objekt'}');
+              
+              // Generer en bedre titel end bare ID
+              String title = jsonData['title'] ?? 'Chat $chatId';
+              if (title == chatId || title == 'Chat $chatId') {
+                // Prøv at genere en bedre titel baseret på indholdet
+                final messages = jsonData['messages'];
+                if (messages is List && messages.isNotEmpty) {
+                  final firstMsg = messages[0];
+                  if (firstMsg is Map && firstMsg.containsKey('content')) {
+                    String content = firstMsg['content'] ?? '';
+                    if (content.length > 30) {
+                      title = content.substring(0, 27) + '...';
+                    } else if (content.isNotEmpty) {
+                      title = content;
+                    }
+                  }
+                }
+              }
+              
+              // Opret et nyt Chat objekt med den forbedrede titel
+              final chat = Chat.fromJson(jsonData);
+              if (chat.title == chatId || chat.title == 'Chat $chatId') {
+                (chat as dynamic).title = title;
+              }
+              
+              print('Chat objekt oprettet med ${chat.messages.length} beskeder og titel: "${chat.title}"');
+              return chat;
+            } catch (e) {
+              print('FEJL ved parsing af JSON: $e');
+              print('JSON indhold (første 100 tegn): ${jsonStr.substring(0, math.min(100, jsonStr.length))}...');
+            }
+          } catch (e) {
+            print('FEJL ved læsning af JSON-fil: $e');
+          }
+        } else {
+          print('Ingen JSON-fil fundet for chat $chatId');
+          
+          // Hvis det er en numerisk ID, prøv at returnere en dummy chat
+          if (isNumericId) {
+            print('Forsøger at oprette en dummy chat for numerisk ID');
+            final dummyChat = Chat(
+              id: chatId,
+              title: 'Chat $chatId',
+              messages: [
+                ChatMessage(
+                  content: 'Kunne ikke indlæse chat indhold. Dette er en placeholder besked.',
+                  isUser: false,
+                  timestamp: DateTime.now(),
+                ),
+                ChatMessage(
+                  content: 'Prøv at eksportere chatten via udtræk-menuen i stedet.',
+                  isUser: false,
+                  timestamp: DateTime.now().add(Duration(seconds: 1)),
+                ),
+              ],
+            );
+            return dummyChat;
+          }
+        }
+      } else {
+        print('CLI kommando fejlede med kode ${result.exitCode}: ${result.stderr}');
+      }
+      
+      print('===== Afslutter forsøg på at hente chat med ID: $chatId =====\n');
+    } catch (e) {
+      print('FEJL ved hentning af chat fra CLI: $e');
+    }
+    
+    return null;
   }
 }

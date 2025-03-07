@@ -4,6 +4,7 @@ import '../services/chat_service.dart';
 import '../services/settings_service.dart';
 import 'chat_list_screen.dart';
 import 'settings_screen.dart';
+import 'search_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,6 +18,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final List<Widget> _screens = [
     const ChatListScreen(),
+    const SearchScreen(),
     const SettingsScreen(),
   ];
 
@@ -91,10 +93,14 @@ class _HomeScreenState extends State<HomeScreen> {
             _selectedIndex = index;
           });
         },
-        items: [
+        items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat),
+            icon: Icon(Icons.chat_bubble_outline),
             label: 'Chats',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.search),
+            label: 'Søg',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),
