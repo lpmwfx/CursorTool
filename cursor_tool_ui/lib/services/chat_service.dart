@@ -8,16 +8,18 @@ import '../cli/chat_browser.dart';
 import '../cli/chat_extractor.dart';
 import '../cli/config.dart';
 import 'settings_service.dart';
+import 'database_service.dart';
 
-// Integreret version der bruger den integrerede CLI-kode
+// Integreret version der bruger den integrerede CLI-kode og lokal database
 class ChatService extends ChangeNotifier {
   final SettingsService _settings;
+  final DatabaseService? _dbService; // Optional for backward compatibility
   List<Chat> _chats = [];
   bool _isLoading = false;
   String _lastError = '';
   String _debugInfo = '';
 
-  ChatService(this._settings);
+  ChatService(this._settings, [this._dbService]);
 
   List<Chat> get chats => _chats;
   bool get isLoading => _isLoading;
@@ -192,12 +194,40 @@ class ChatService extends ChangeNotifier {
     return result;
   }
 
-  // Hent alle chats via integreret CLI-kode
+  // Hent alle chats - enten fra databasen eller via CLI
   Future<void> loadChats() async {
     _isLoading = true;
     _lastError = '';
     notifyListeners();
 
+    try {
+      // Hvis database service findes og er initialiseret, brug den
+      if (_dbService != null && _dbService!.isInitialized) {
+        print('Indlæser chats fra lokal database');
+        _chats = await _dbService!.getAllChats();
+        
+        if (_chats.isEmpty) {
+          _lastError = 'Ingen chats fundet i databasen. Importér chats fra indstillinger.';
+        } else {
+          print('Indlæste ${_chats.length} chats fra databasen');
+        }
+      } else {
+        // Ellers brug den oprindelige CLI-metode
+        print('Indlæser chats via CLI-metode (fallback)');
+        await _loadChatsFromCli();
+      }
+    } catch (e, stackTrace) {
+      print('Fejl ved indlæsning af chats: $e');
+      print('Stack trace: $stackTrace');
+      _lastError = 'Fejl ved indlæsning af chats: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // Oprindelig metode til at indlæse chats via CLI
+  Future<void> _loadChatsFromCli() async {
     try {
       // Opret config med indstillinger
       print('Opretter Config med workspacePath: ${_settings.workspacePath}');
@@ -210,8 +240,6 @@ class ChatService extends ChangeNotifier {
       
       if (chatHistories.isEmpty) {
         _lastError = 'Ingen chats fundet i ${_settings.workspacePath}';
-        _isLoading = false;
-        notifyListeners();
         return;
       }
       
@@ -241,12 +269,9 @@ class ChatService extends ChangeNotifier {
       print('Færdig med at indlæse ${_chats.length} chats');
       
     } catch (e, stackTrace) {
-      print('Fejl ved indlæsning af chats: $e');
+      print('Fejl ved CLI indlæsning af chats: $e');
       print('Stack trace: $stackTrace');
-      _lastError = 'Fejl ved indlæsning af chats: $e';
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+      throw e; // Videresend fejl til kaldende funktion
     }
   }
 
@@ -513,6 +538,69 @@ class ChatService extends ChangeNotifier {
       } else if (entity is Directory) {
         await _copyDirectory(entity.path, newPath);
       }
+    }
+  }
+
+  // Forsøg at automatisk importere chats fra Cursor's databases
+  Future<int> autoImportFromCursor() async {
+    if (_dbService == null || !_dbService!.isInitialized) {
+      _lastError = 'Database service er ikke initialiseret';
+      return 0;
+    }
+    
+    try {
+      _isLoading = true;
+      notifyListeners();
+      
+      final homeDir = Platform.environment['HOME'] ?? '';
+      final cursorPath = path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage');
+      
+      print('Forsøger at importere fra: $cursorPath');
+      
+      // Find alle state.vscdb filer
+      final cursorDir = Directory(cursorPath);
+      if (!await cursorDir.exists()) {
+        _lastError = 'Cursor workspace mappe ikke fundet';
+        return 0;
+      }
+      
+      List<File> dbFiles = [];
+      
+      try {
+        // List alle mapper i workspaceStorage
+        await for (final entry in cursorDir.list()) {
+          if (entry is Directory) {
+            final dbFile = File(path.join(entry.path, 'state.vscdb'));
+            if (await dbFile.exists()) {
+              dbFiles.add(dbFile);
+            }
+          }
+        }
+      } catch (e) {
+        _lastError = 'Kunne ikke læse mappen: $e';
+        print('Fejl ved læsning af cursor workspace: $e');
+        return 0;
+      }
+      
+      if (dbFiles.isEmpty) {
+        _lastError = 'Ingen database filer fundet';
+        return 0;
+      }
+      
+      print('Fandt ${dbFiles.length} database filer. Starter import...');
+      
+      // Importér fra fundne databaser
+      final importedCount = await _dbService!.importFromCursorDb(dbFiles);
+      
+      if (importedCount > 0) {
+        // Genindlæs chats
+        await loadChats();
+      }
+      
+      return importedCount;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 }

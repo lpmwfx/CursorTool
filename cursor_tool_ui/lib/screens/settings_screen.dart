@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
+import 'package:path/path.dart' as path;  // Korrekt import til path funktioner
 import '../services/settings_service.dart';
 import '../services/chat_service.dart';
+import '../services/database_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -42,9 +44,23 @@ class SettingsScreen extends StatelessWidget {
                       'macOS tillader ikke appen at læse Cursor\'s chatfiler direkte fra Library/Application Support.',
                     ),
                     const SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: () => _showMacOSGuide(context),
-                      child: const Text('Vis vejledning til løsning'),
+                    Row(
+                      children: [
+                        ElevatedButton(
+                          onPressed: () => _showMacOSGuide(context),
+                          child: const Text('Vis vejledning til løsning'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: () => _importCursorChats(context),
+                          icon: const Icon(Icons.cloud_download),
+                          label: const Text('Importér Chats'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -141,6 +157,18 @@ class SettingsScreen extends StatelessWidget {
             description: 'Lars med hjælp fra Claude 3.7 AI',
             trailing: null,
             onTap: null,
+          ),
+          const Divider(),
+          _buildSectionTitle(context, 'Database'),
+          _buildSettingItem(
+            context: context,
+            title: 'Importér Cursor Chats',
+            description: 'Importér chats fra Cursor\'s SQLite databaser',
+            trailing: IconButton(
+              icon: const Icon(Icons.import_export),
+              onPressed: () => _importCursorChats(context),
+            ),
+            onTap: () => _importCursorChats(context),
           ),
         ],
       ),
@@ -504,5 +532,222 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  // Funktion til at importere chats fra Cursor
+  Future<void> _importCursorChats(BuildContext context) async {
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final chatService = Provider.of<ChatService>(context, listen: false);
+    
+    // Hent stier til Cursor databaser
+    final cursorDbFiles = await _findCursorDbFiles();
+    
+    if (cursorDbFiles.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ingen Cursor database filer fundet')),
+        );
+      }
+      return;
+    }
+    
+    // Vis dialog med valg af filer
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _ImportCursorDbDialog(
+          dbFiles: cursorDbFiles, 
+          dbService: dbService,
+          chatService: chatService,
+        ),
+      );
+    }
+  }
+  
+  // Find Cursor database filer
+  Future<List<File>> _findCursorDbFiles() async {
+    List<File> result = [];
+    
+    try {
+      // Prøv først med FilePicker - giver brugeren kontrol
+      FilePickerResult? pickerResult = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['vscdb'],
+        allowMultiple: true,
+      );
+      
+      if (pickerResult != null && pickerResult.files.isNotEmpty) {
+        // Bruger har valgt filer
+        for (final file in pickerResult.files) {
+          if (file.path != null) {
+            result.add(File(file.path!));
+          }
+        }
+        return result;
+      }
+      
+      // Alternativt, prøv at finde Cursor databaser automatisk
+      if (Platform.isMacOS) {
+        final homeDir = Platform.environment['HOME'] ?? '';
+        final cursorDir = Directory(path.join(
+          homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage'
+        ));
+        
+        if (await cursorDir.exists()) {
+          // List alle mapper i workspaceStorage
+          await for (final entry in cursorDir.list()) {
+            if (entry is Directory) {
+              final dbFile = File(path.join(entry.path, 'state.vscdb'));
+              if (await dbFile.exists()) {
+                result.add(dbFile);
+              }
+            }
+          }
+        }
+      } else if (Platform.isLinux) {
+        final homeDir = Platform.environment['HOME'] ?? '';
+        final cursorDir = Directory(path.join(
+          homeDir, '.config', 'Cursor', 'User', 'workspaceStorage'
+        ));
+        
+        if (await cursorDir.exists()) {
+          await for (final entry in cursorDir.list()) {
+            if (entry is Directory) {
+              final dbFile = File(path.join(entry.path, 'state.vscdb'));
+              if (await dbFile.exists()) {
+                result.add(dbFile);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Fejl ved søgning efter Cursor database filer: $e');
+    }
+    
+    return result;
+  }
+}
+
+/// Dialog til at importere Cursor database filer
+class _ImportCursorDbDialog extends StatefulWidget {
+  final List<File> dbFiles;
+  final DatabaseService dbService;
+  final ChatService chatService;
+  
+  const _ImportCursorDbDialog({
+    required this.dbFiles, 
+    required this.dbService,
+    required this.chatService,
+  });
+
+  @override
+  State<_ImportCursorDbDialog> createState() => _ImportCursorDbDialogState();
+}
+
+class _ImportCursorDbDialogState extends State<_ImportCursorDbDialog> {
+  bool _importing = false;
+  double _progress = 0.0;
+  String _status = 'Klar til import';
+  int _importedCount = 0;
+  
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Importér Cursor Chats'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Fundet ${widget.dbFiles.length} Cursor database filer'),
+            const SizedBox(height: 16),
+            if (!_importing)
+              Text('Tryk på Start for at importere chatdata fra disse filer.'),
+            if (_importing) ...[
+              LinearProgressIndicator(value: _progress),
+              const SizedBox(height: 8),
+              Text(_status),
+            ],
+            if (_importedCount > 0) ...[
+              const SizedBox(height: 16),
+              Text('Importeret $_importedCount chats'),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _importing ? null : () => Navigator.pop(context),
+          child: const Text('Annuller'),
+        ),
+        ElevatedButton(
+          onPressed: _importing ? null : _startImport,
+          child: Text(_importing ? 'Importerer...' : 'Start Import'),
+        ),
+      ],
+    );
+  }
+  
+  Future<void> _startImport() async {
+    setState(() {
+      _importing = true;
+      _progress = 0.0;
+      _status = 'Starter import...';
+    });
+    
+    try {
+      // Lyt til ændringer i import-tilstand
+      void listenerCallback() {
+        if (mounted) {
+          setState(() {
+            _progress = widget.dbService.importProgress;
+            _status = widget.dbService.isImporting
+                ? 'Importerer...'
+                : 'Import afsluttet';
+          });
+        }
+      }
+      
+      // Tilføj lytter
+      widget.dbService.addListener(listenerCallback);
+      
+      // Start import
+      _importedCount = await widget.dbService.importFromCursorDb(widget.dbFiles);
+      
+      // Fjern lytter
+      widget.dbService.removeListener(listenerCallback);
+      
+      // Opdater chat liste
+      await widget.chatService.loadChats();  // Brug den eksisterende loadChats metode
+      
+      if (mounted) {
+        setState(() {
+          _importing = false;
+          _progress = 1.0;
+          _status = 'Import afsluttet';
+        });
+      }
+      
+      // Luk dialogen efter et kort øjeblik
+      await Future.delayed(const Duration(seconds: 1));
+      if (context.mounted) {
+        Navigator.pop(context);
+        
+        // Vis snackbar med resultat
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Importerede $_importedCount chats fra Cursor')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _importing = false;
+          _status = 'Fejl: $e';
+        });
+      }
+    }
   }
 }

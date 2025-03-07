@@ -45,6 +45,7 @@ dependencies:
   collection: ^1.18.0
   dart_console: ^1.2.0  # CLI-komponent
   vector_math: ^2.1.4
+  flutter_markdown: ^0.6.18  # Til visning af markdown
 
 dev_dependencies:
   flutter_test:

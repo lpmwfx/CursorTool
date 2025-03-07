@@ -24,8 +24,16 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     // Indlæs chats, når appen starter
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ChatService>().loadChats();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final chatService = context.read<ChatService>();
+      
+      // Forsøg først at indlæse eksisterende chats
+      await chatService.loadChats();
+      
+      // Hvis ingen chats blev fundet, forsøg automatisk import
+      if (chatService.chats.isEmpty) {
+        _showAutoImportDialog();
+      }
     });
   }
 
@@ -95,5 +103,93 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  // Vis dialog med mulighed for auto-import
+  void _showAutoImportDialog() {
+    // Giv lidt tid til at UI'en er klar
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Ingen chats fundet'),
+          content: const Text(
+            'Vil du forsøge at importere chats direkte fra Cursor?\n\n'
+            'Dette kræver at appen har adgang til Cursors mappe.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Nej tak'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _startAutoImport();
+              },
+              child: const Text('Ja, importér'),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+  
+  // Start auto-import
+  Future<void> _startAutoImport() async {
+    final chatService = context.read<ChatService>();
+    
+    // Vis loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Importerer chats fra Cursor...'),
+          ],
+        ),
+      ),
+    );
+    
+    try {
+      // Forsøg at importere
+      final importCount = await chatService.autoImportFromCursor();
+      
+      // Luk dialog
+      if (mounted) Navigator.pop(context);
+      
+      // Vis resultat
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              importCount > 0
+                  ? 'Importerede $importCount chats fra Cursor'
+                  : 'Kunne ikke importere chats: ${chatService.lastError}',
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      // Luk dialog ved fejl
+      if (mounted) Navigator.pop(context);
+      
+      // Vis fejl
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fejl ved import: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

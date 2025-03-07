@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'services/chat_service.dart';
 import 'services/settings_service.dart';
+import 'services/database_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,12 +12,21 @@ void main() async {
   final settingsService = SettingsService();
   await settingsService.init();
 
-  final chatService = ChatService(settingsService);
+  final databaseService = DatabaseService();
+  await databaseService.init();
+  
+  final chatService = ChatService(settingsService, databaseService);
+  
+  // Indlæs chats efter app er startet
+  Future.delayed(Duration(milliseconds: 500), () {
+    chatService.loadChats();
+  });
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => settingsService),
+        ChangeNotifierProvider(create: (_) => databaseService),
         ChangeNotifierProvider(create: (_) => chatService),
       ],
       child: const CursorToolsApp(),
