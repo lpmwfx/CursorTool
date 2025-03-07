@@ -26,6 +26,10 @@ class ChatService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get lastError => _lastError;
   String get debugInfo => _debugInfo;
+  
+  // Tilføj getters til settings-værdier for debugging
+  String get cliPath => _settings.cliPath;
+  String get workspacePath => _settings.workspacePath;
 
   // Kør CLI tool som ekstern proces
   Future<ProcessResult> runCliTool(List<String> args) async {
@@ -154,7 +158,14 @@ class ChatService extends ChangeNotifier {
           final parts = line.split('|');
           if (parts.length >= 4) {
             final id = parts[0].trim();
-            final title = parts[1].trim();
+            
+            // Hvis titlen er tom, brug første 10 tegn af ID som titel
+            String title = parts[1].trim();
+            if (title.isEmpty || title == id) {
+              // Forsøg at lave en mere beskrivende titel fra første besked
+              title = 'Chat $id';
+            }
+            
             final dato = parts[2].trim();
             final antalStr = parts[3].trim();
             final antal = int.tryParse(antalStr) ?? 0;
@@ -191,7 +202,7 @@ class ChatService extends ChangeNotifier {
       if (_chats.isNotEmpty) {
         print('Sorterer ${_chats.length} chats');
         // Sorter med højeste ID først (nyeste chats øverst)
-        _chats.sort((a, b) => int.parse(b.id).compareTo(int.parse(a.id)));
+        _chats.sort((a, b) => b.id.compareTo(a.id));
       }
     } catch (e) {
       print('Fejl ved parsing af CLI output: $e');

@@ -5,6 +5,8 @@ import '../services/chat_service.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
+import 'package:path/path.dart' as path;
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -53,20 +55,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
             children: [
               if (errorMessage.isNotEmpty && chats.isEmpty)
                 Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
                       const Icon(
-                        Icons.error_outline,
+              Icons.error_outline,
                         size: 48,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
+              color: Colors.red,
+            ),
+            const SizedBox(height: 16),
+            Text(
                         'Fejl ved indlæsning af chats',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 8),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
                       Text(errorMessage),
                       const SizedBox(height: 24),
                       ElevatedButton.icon(
@@ -82,27 +84,27 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           Navigator.pushNamed(context, '/settings');
                         },
                         child: const Text('Gå til indstillinger'),
-                      ),
-                    ],
-                  ),
+            ),
+          ],
+        ),
                 )
               else if (chats.isEmpty && !isLoading)
                 Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
                       const Icon(
-                        Icons.chat_bubble_outline,
+              Icons.chat_bubble_outline,
                         size: 48,
-                        color: Colors.grey,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Ingen chats fundet',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
+              color: Colors.grey,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Ingen chats fundet',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            const Text(
                         'Konfigurer CLI-værktøjet for at indlæse dine Cursor chats'
                       ),
                       const SizedBox(height: 24),
@@ -148,9 +150,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           Navigator.pushNamed(context, '/settings');
                         },
                         child: const Text('Gå til indstillinger'),
-                      ),
-                    ],
-                  ),
+            ),
+          ],
+        ),
                 )
               else
                 ListView.builder(
@@ -233,42 +235,146 @@ class _ChatListScreenState extends State<ChatListScreen> {
     try {
       var chatToDisplay = chat;
       
-      // Hvis chatten kun har én besked, er det en oversigtsvisning - hent den fulde chat
-      if (chat.messages.length == 1 && chat.messages[0].content?.contains('Denne chat viser kun oversigten') == true) {
-        print('Forsøger at hente fuld chat fra CLI værktøj');
+      // Hent altid den fulde chat fra CLI værktøj for at sikre vi har det fulde indhold
+      print('Henter fuld chat fra CLI værktøj');
+      print('CLI sti: ${chatService.cliPath}');
+      print('Workspace sti: ${chatService.workspacePath}');
+      
+      try {
+        // Opret en output-mappe i workspace directoriet til at gemme JSON filen
+        final outputDir = path.join(chatService.workspacePath, 'output');
+        Directory(outputDir).createSync(recursive: true);
         
-        try {
-          // Hent den fulde chat via CLI værktøj
-          final result = await chatService.runCliTool(['--extract', chat.id, '--format', 'json']);
+        // Hent den fulde chat via CLI værktøj
+        print('Udfører runCliTool med argumenter: --extract ${chat.id} --format json --output $outputDir');
+        final result = await chatService.runCliTool(['--extract', chat.id, '--format', 'json', '--output', outputDir]);
+        
+        print('CLI kommando afsluttet med kode: ${result.exitCode}');
+        print('Stdout længde: ${result.stdout.toString().length}');
+        print('Stderr: ${result.stderr}');
+        
+        if (result.exitCode == 0) {
+          // Find filstien i outputtet
+          final output = result.stdout.toString();
+          print('CLI output: $output');
           
-          if (result.exitCode == 0) {
-            // Find JSON i output
-            final output = result.stdout.toString();
-            int jsonStart = output.indexOf('{');
-            if (jsonStart >= 0) {
-              final jsonStr = output.substring(jsonStart);
+          // Forsøg at finde filstien i outputtet med regex
+          final regex = RegExp(r'Chat udtrukket til: (.+\.json)');
+          final match = regex.firstMatch(output);
+          
+          String jsonFilePath;
+          if (match != null) {
+            jsonFilePath = match.group(1)!;
+            print('Fandt JSON fil sti i output: $jsonFilePath');
+          } else {
+            // Alternativt, gæt filstien baseret på ID
+            jsonFilePath = path.join(outputDir, 'Chat_${chat.id}_${chat.id}.json');
+            print('Kunne ikke finde filsti i output, gætter på: $jsonFilePath');
+          }
+          
+          // Kontroller om filen eksisterer
+          final jsonFile = File(jsonFilePath);
+          if (await jsonFile.exists()) {
+            print('JSON fil eksisterer: ${jsonFile.path}');
+            
+            try {
+              // Læs JSON fra filen
+              final jsonStr = await jsonFile.readAsString();
+              print('Læste ${jsonStr.length} tegn fra JSON filen');
               
-              // Parse JSON
-              final jsonData = jsonDecode(jsonStr);
-              
-              // Opret chat model
-              final fullChat = Chat.fromJson(jsonData);
-              
-              // Opdater chatten vi vil vise
-              chatToDisplay = fullChat;
-              
-              // Gem til database hvis tilgængelig
               try {
-                await chatService.saveChatToDatabase(fullChat);
+                // Parse JSON
+                final jsonData = jsonDecode(jsonStr);
+                print('JSON data decoded - keys: ${jsonData.keys.join(', ')}');
+                
+                // Opret chat model
+                final fullChat = Chat.fromJson(jsonData);
+                print('Chat objekt oprettet med ${fullChat.messages.length} beskeder');
+                
+                if (fullChat.messages.isNotEmpty) {
+                  // Opdater chatten vi vil vise
+                  chatToDisplay = fullChat;
+                  print('Chatten opdateret til visning med ${chatToDisplay.messages.length} beskeder');
+                  
+                  // Gem til database hvis tilgængelig
+                  try {
+                    await chatService.saveChatToDatabase(fullChat);
+                    print('Chat gemt til database');
+                  } catch (e) {
+                    print('Kunne ikke gemme chat til databasen: $e');
+                  }
+                } else {
+                  print('Hentet chat har ingen beskeder');
+                }
               } catch (e) {
-                print('Kunne ikke gemme chat til databasen: $e');
+                print('Fejl ved parsing af JSON: $e');
               }
+            } catch (e) {
+              print('Fejl ved læsning af JSON fil: $e');
+            }
+          } else {
+            print('JSON fil blev ikke fundet: $jsonFilePath');
+            
+            // Prøv at liste filer i output-mappen for at finde den
+            try {
+              final dir = Directory(outputDir);
+              if (await dir.exists()) {
+                print('Indhold af output-mappen:');
+                await for (final entity in dir.list()) {
+                  print('- ${entity.path}');
+                  if (entity is File && entity.path.contains(chat.id)) {
+                    // Fandt en fil, der matcher chat ID'et
+                    print('Matcher fil fundet: ${entity.path}');
+                    
+                    try {
+                      // Læs JSON fra den matchende fil
+                      final jsonStr = await entity.readAsString();
+                      print('Læste ${jsonStr.length} tegn fra JSON filen');
+                      
+                      try {
+                        // Parse JSON
+                        final jsonData = jsonDecode(jsonStr);
+                        print('JSON data decoded - keys: ${jsonData.keys.join(', ')}');
+                        
+                        // Opret chat model
+                        final fullChat = Chat.fromJson(jsonData);
+                        print('Chat objekt oprettet med ${fullChat.messages.length} beskeder');
+                        
+                        if (fullChat.messages.isNotEmpty) {
+                          // Opdater chatten vi vil vise
+                          chatToDisplay = fullChat;
+                          print('Chatten opdateret til visning med ${chatToDisplay.messages.length} beskeder');
+                          
+                          // Gem til database hvis tilgængelig
+                          try {
+                            await chatService.saveChatToDatabase(fullChat);
+                            print('Chat gemt til database');
+                          } catch (e) {
+                            print('Kunne ikke gemme chat til databasen: $e');
+                          }
+                          break; // Forlad løkken når vi har fundet og indlæst en gyldig fil
+                        }
+                      } catch (e) {
+                        print('Fejl ved parsing af JSON: $e');
+                      }
+                    } catch (e) {
+                      print('Fejl ved læsning af JSON fil: $e');
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              print('Fejl ved læsning af output-mappen: $e');
             }
           }
-        } catch (e) {
-          print('Fejl ved hentning af fuld chat: $e');
-          // Vi fortsætter med den oprindelige chat hvis der opstår en fejl
+        } else {
+          print('CLI kommando fejlede med kode: ${result.exitCode}');
+          print('Stderr: ${result.stderr}');
         }
+      } catch (e) {
+        print('Fejl ved hentning af fuld chat: $e');
+        print('Stacktrace: ${StackTrace.current}');
+        // Vi fortsætter med den oprindelige chat hvis der opstår en fejl
       }
       
       // Luk loading dialog
@@ -276,6 +382,22 @@ class _ChatListScreenState extends State<ChatListScreen> {
       
       // Vis chatten i en ny dialog
       if (context.mounted) {
+        if (chatToDisplay.messages.isEmpty || 
+            (chatToDisplay.messages.length == 1 && 
+             chatToDisplay.messages[0].content?.contains('Denne chat viser kun oversigten') == true)) {
+          
+          // Vis fejlbesked hvis der ikke er nogen beskeder at vise
+          print('Ingen beskeder at vise - viser fejlbesked');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Kunne ikke hente chat-indhold - prøv igen eller tjek indstillinger'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+          return;
+        }
+        
+        print('Viser dialog med ${chatToDisplay.messages.length} beskeder');
         showDialog(
           context: context,
           builder: (BuildContext context) {
@@ -324,13 +446,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
         );
       }
     } catch (e) {
-      print('Fejl ved visning af chat: $e');
+      print('Overordnet fejl ved visning af chat: $e');
+      print('Stacktrace: ${StackTrace.current}');
       
-      // Luk loading dialog
+      // Luk loading dialog hvis den stadig er åben
       if (context.mounted) {
         Navigator.of(context).pop();
-        
-        // Vis fejlbesked
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Fejl ved visning af chat: $e')),
         );
